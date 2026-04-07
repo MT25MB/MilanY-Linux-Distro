@@ -189,7 +189,6 @@ milanY is provided as-is for educational and research purposes. users are respon
 ---
 
 **made with ❤️ for digital freedom**  
-**channel: [down with big brother](https://www.youtube.com/channel/ucgj29l7jsaklicws0klt3w)**
 
 ## disclaimer
 
