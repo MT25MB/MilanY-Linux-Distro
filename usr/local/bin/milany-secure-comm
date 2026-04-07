@@ -1,0 +1,491 @@
+#!/bin/bash
+# milanY secure communication suite
+# privacy-focused communication tools
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# communication configuration
+COMM_DIR="/var/lib/milany-comm"
+CONTACTS_FILE="$COMM_DIR/contacts.txt"
+KEYS_DIR="$COMM_DIR/keys"
+CHAT_LOGS="$COMM_DIR/logs"
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-secure-comm - secure communication suite${NC}"
+    echo ""
+    echo "usage: milany-secure-comm [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  encrypt <message> <recipient>   encrypt message for recipient"
+    echo "  decrypt <message>               decrypt message"
+    echo "  sign <message>                 sign message with your key"
+    echo "  verify <message> <sender>      verify message signature"
+    echo "  contacts                       manage contacts"
+    echo "  chat <contact>                 start secure chat"
+    echo "  email <recipient>               send encrypted email"
+    echo "  keys                          manage encryption keys"
+    echo "  generate                       generate new key pair"
+    echo "  import <keyfile>              import public key"
+    echo "  export <contact>               export public key"
+    echo "  fingerprint <contact>           show contact fingerprint"
+    echo ""
+    echo "contact management:"
+    echo "  milany-secure-comm contacts add <name> <email>"
+    echo "  milany-secure-comm contacts list"
+    echo "  milany-secure-comm contacts remove <name>"
+    echo ""
+    echo "examples:"
+    echo "  milany-secure-comm encrypt 'secret message' alice"
+    echo "  milany-secure-comm contacts add bob bob@example.com"
+    echo "  milany-secure-comm chat alice"
+}
+
+# initialize communication system
+init_comm() {
+    mkdir -p "$COMM_DIR"
+    mkdir -p "$KEYS_DIR"
+    mkdir -p "$CHAT_LOGS"
+    touch "$CONTACTS_FILE"
+    
+    # check for gpg
+    if ! command -v gpg >/dev/null 2>&1; then
+        echo -e "${RED}error: gpg not found${NC}"
+        echo "install with: pacman -S gnupg"
+        exit 1
+    fi
+}
+
+# generate key pair
+generate_keys() {
+    echo -e "${BLUE}generating encryption key pair...${NC}"
+    echo ""
+    
+    # get user information
+    echo -e "${WHITE}enter your details for key generation:${NC}"
+    echo -n -e "${CYAN}name: ${NC}"
+    read -r name
+    echo -n -e "${CYAN}email: ${NC}"
+    read -r email
+    
+    if [ -z "$name" ] || [ -z "$email" ]; then
+        echo -e "${RED}error: name and email required${NC}"
+        return 1
+    fi
+    
+    # generate gpg key
+    gpg --batch --gen-key << EOF
+Key-Type: RSA
+Key-Length: 4096
+Subkey-Type: RSA
+Subkey-Length: 4096
+Name-Real: $name
+Name-Email: $email
+Expire-Date: 0
+%no-protection
+EOF
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}key pair generated successfully${NC}"
+        echo -e "${CYAN}your fingerprint:${NC}"
+        gpg --list-keys --with-fingerprint "$email" | grep "Key fingerprint" -A 1
+    else
+        echo -e "${RED}failed to generate key pair${NC}"
+        return 1
+    fi
+}
+
+# encrypt message
+encrypt_message() {
+    local message="$1"
+    local recipient="$2"
+    
+    if [ -z "$message" ] || [ -z "$recipient" ]; then
+        echo -e "${RED}error: message and recipient required${NC}"
+        return 1
+    fi
+    
+    # check if recipient exists in contacts
+    local recipient_email=$(get_contact_email "$recipient")
+    if [ -z "$recipient_email" ]; then
+        recipient_email="$recipient"
+    fi
+    
+    echo -e "${BLUE}encrypting message for $recipient_email...${NC}"
+    
+    # encrypt with gpg
+    local encrypted=$(echo "$message" | gpg --encrypt --armor --recipient "$recipient_email" 2>/dev/null)
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}encrypted message:${NC}"
+        echo "$encrypted"
+    else
+        echo -e "${RED}failed to encrypt message${NC}"
+        return 1
+    fi
+}
+
+# decrypt message
+decrypt_message() {
+    local message="$1"
+    
+    if [ -z "$message" ]; then
+        echo -e "${RED}error: message required${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}decrypting message...${NC}"
+    
+    # decrypt with gpg
+    local decrypted=$(echo "$message" | gpg --decrypt --armor 2>/dev/null)
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}decrypted message:${NC}"
+        echo "$decrypted"
+    else
+        echo -e "${RED}failed to decrypt message${NC}"
+        return 1
+    fi
+}
+
+# sign message
+sign_message() {
+    local message="$1"
+    
+    if [ -z "$message" ]; then
+        echo -e "${RED}error: message required${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}signing message...${NC}"
+    
+    # sign with gpg
+    local signed=$(echo "$message" | gpg --clearsign --armor 2>/dev/null)
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}signed message:${NC}"
+        echo "$signed"
+    else
+        echo -e "${RED}failed to sign message${NC}"
+        return 1
+    fi
+}
+
+# verify signature
+verify_signature() {
+    local message="$1"
+    local sender="$2"
+    
+    if [ -z "$message" ] || [ -z "$sender" ]; then
+        echo -e "${RED}error: message and sender required${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}verifying signature from $sender...${NC}"
+    
+    # verify with gpg
+    local verification=$(echo "$message" | gpg --verify --armor 2>&1)
+    
+    if echo "$verification" | grep -q "Good signature"; then
+        echo -e "${GREEN}✓ signature verified - message from $sender is authentic${NC}"
+    else
+        echo -e "${RED}✗ signature verification failed${NC}"
+        echo "$verification"
+        return 1
+    fi
+}
+
+# get contact email
+get_contact_email() {
+    local contact="$1"
+    
+    if [ -f "$CONTACTS_FILE" ]; then
+        grep "^$contact|" "$CONTACTS_FILE" 2>/dev/null | cut -d'|' -f2
+    fi
+}
+
+# manage contacts
+manage_contacts() {
+    local action="$1"
+    local name="$2"
+    local email="$3"
+    
+    case "$action" in
+        add)
+            if [ -z "$name" ] || [ -z "$email" ]; then
+                echo -e "${RED}error: name and email required${NC}"
+                return 1
+            fi
+            
+            echo "$name|$email" >> "$CONTACTS_FILE"
+            echo -e "${GREEN}contact added: $name <$email>${NC}"
+            ;;
+        list)
+            if [ ! -f "$CONTACTS_FILE" ]; then
+                echo -e "${YELLOW}no contacts found${NC}"
+                return
+            fi
+            
+            echo -e "${CYAN}[ contacts ]${NC}"
+            while IFS='|' read -r name email; do
+                echo -e "${WHITE}$name: $email${NC}"
+            done < "$CONTACTS_FILE"
+            ;;
+        remove)
+            if [ -z "$name" ]; then
+                echo -e "${RED}error: contact name required${NC}"
+                return 1
+            fi
+            
+            # create temp file without contact
+            local temp_file=$(mktemp)
+            grep -v "^$name|" "$CONTACTS_FILE" > "$temp_file" 2>/dev/null
+            mv "$temp_file" "$CONTACTS_FILE"
+            
+            echo -e "${GREEN}contact removed: $name${NC}"
+            ;;
+        *)
+            echo -e "${RED}error: unknown contact action${NC}"
+            return 1
+            ;;
+    esac
+}
+
+# start secure chat
+start_chat() {
+    local contact="$1"
+    
+    if [ -z "$contact" ]; then
+        echo -e "${RED}error: contact required${NC}"
+        return 1
+    fi
+    
+    local recipient_email=$(get_contact_email "$contact")
+    if [ -z "$recipient_email" ]; then
+        echo -e "${RED}error: contact '$contact' not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${MAGENTA}=== secure chat with $contact ===${NC}"
+    echo -e "${CYAN}recipient: $recipient_email${NC}"
+    echo -e "${CYAN}type '/quit' to exit, '/help' for commands${NC}"
+    echo ""
+    
+    local chat_log="$CHAT_LOGS/chat-$(date +%Y%m%d)-$contact.log"
+    touch "$chat_log"
+    
+    while true; do
+        echo -n -e "${WHITE}you: ${NC}"
+        read -r input
+        
+        case "$input" in
+            "/quit")
+                echo -e "${YELLOW}ending chat${NC}"
+                break
+                ;;
+            "/help")
+                echo -e "${CYAN}chat commands:${NC}"
+                echo "  /encrypt <message> - send encrypted message"
+                echo "  /sign <message> - send signed message"
+                echo "  /quit - exit chat"
+                ;;
+            "/encrypt"*)
+                local message="${input#/encrypt }"
+                local encrypted=$(encrypt_message "$message" "$recipient_email" | tail -n +3)
+                echo -e "${GREEN}encrypted: $encrypted${NC}"
+                echo "$(date '+%H:%M:%S') [encrypted] you: $message" >> "$chat_log"
+                ;;
+            "/sign"*)
+                local message="${input#/sign }"
+                local signed=$(sign_message "$message" | tail -n +3)
+                echo -e "${GREEN}signed: $signed${NC}"
+                echo "$(date '+%H:%M:%S') [signed] you: $message" >> "$chat_log"
+                ;;
+            *)
+                echo "$(date '+%H:%M:%S') you: $input" >> "$chat_log"
+                echo -e "${WHITE}you: $input${NC}"
+                ;;
+        esac
+    done
+}
+
+# send encrypted email
+send_email() {
+    local recipient="$1"
+    
+    if [ -z "$recipient" ]; then
+        echo -e "${RED}error: recipient required${NC}"
+        return 1
+    fi
+    
+    local recipient_email=$(get_contact_email "$recipient")
+    if [ -z "$recipient_email" ]; then
+        recipient_email="$recipient"
+    fi
+    
+    echo -e "${BLUE}composing encrypted email to $recipient_email...${NC}"
+    echo ""
+    
+    # get message
+    echo -n -e "${WHITE}message: ${NC}"
+    read -r message
+    
+    if [ -z "$message" ]; then
+        echo -e "${RED}error: message cannot be empty${NC}"
+        return 1
+    fi
+    
+    # get subject
+    echo -n -e "${WHITE}subject: ${NC}"
+    read -r subject
+    
+    # encrypt message
+    local encrypted=$(echo "$message" | gpg --encrypt --armor --recipient "$recipient_email" 2>/dev/null)
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}failed to encrypt message${NC}"
+        return 1
+    fi
+    
+    # create email
+    local email_file="/tmp/encrypted-email-$(date +%s).txt"
+    cat > "$email_file" << EOF
+To: $recipient_email
+Subject: [ENCRYPTED] $subject
+
+This message contains encrypted content. Use GPG to decrypt.
+
+$encrypted
+EOF
+    
+    echo -e "${GREEN}encrypted email prepared: $email_file${NC}"
+    echo -e "${CYAN}send with your preferred email client${NC}"
+}
+
+# manage keys
+manage_keys() {
+    local action="$1"
+    local target="$2"
+    
+    case "$action" in
+        list)
+            echo -e "${CYAN}[ your encryption keys ]${NC}"
+            gpg --list-secret-keys --keyid-format LONG
+            echo ""
+            echo -e "${CYAN}[ public keys ]${NC}"
+            gpg --list-keys --keyid-format LONG
+            ;;
+        import)
+            if [ -z "$target" ]; then
+                echo -e "${RED}error: key file required${NC}"
+                return 1
+            fi
+            
+            if [ ! -f "$target" ]; then
+                echo -e "${RED}error: key file not found${NC}"
+                return 1
+            fi
+            
+            gpg --import "$target"
+            echo -e "${GREEN}key imported from $target${NC}"
+            ;;
+        export)
+            if [ -z "$target" ]; then
+                echo -e "${RED}error: contact name required${NC}"
+                return 1
+            fi
+            
+            local email=$(get_contact_email "$target")
+            if [ -z "$email" ]; then
+                echo -e "${RED}error: contact '$target' not found${NC}"
+                return 1
+            fi
+            
+            local export_file="$KEYS_DIR/$target-public.asc"
+            gpg --armor --export "$email" > "$export_file"
+            echo -e "${GREEN}public key exported to: $export_file${NC}"
+            ;;
+        fingerprint)
+            if [ -z "$target" ]; then
+                echo -e "${RED}error: contact name required${NC}"
+                return 1
+            fi
+            
+            local email=$(get_contact_email "$target")
+            if [ -z "$email" ]; then
+                echo -e "${RED}error: contact '$target' not found${NC}"
+                return 1
+            fi
+            
+            echo -e "${CYAN}[ fingerprint for $target ($email) ]${NC}"
+            gpg --list-keys --with-fingerprint "$email" | grep "Key fingerprint" -A 1
+            ;;
+        *)
+            echo -e "${RED}error: unknown key action${NC}"
+            return 1
+            ;;
+    esac
+}
+
+# main function
+main() {
+    init_comm
+    
+    case "${1:-help}" in
+        encrypt)
+            encrypt_message "$2" "$3"
+            ;;
+        decrypt)
+            decrypt_message "$2"
+            ;;
+        sign)
+            sign_message "$2"
+            ;;
+        verify)
+            verify_signature "$2" "$3"
+            ;;
+        contacts)
+            manage_contacts "$2" "$3" "$4"
+            ;;
+        chat)
+            start_chat "$2"
+            ;;
+        email)
+            send_email "$2"
+            ;;
+        keys)
+            manage_keys "$2" "$3"
+            ;;
+        generate)
+            generate_keys
+            ;;
+        import)
+            manage_keys "import" "$2"
+            ;;
+        export)
+            manage_keys "export" "$2"
+            ;;
+        fingerprint)
+            manage_keys "fingerprint" "$2"
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# run main function
+main "$@"

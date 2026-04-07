@@ -1,0 +1,203 @@
+# milanY linux boot animation
+# personalized for "Down with Big Brother" channel
+
+# global variables
+progress = 0;
+progress_bar = 0;
+status = "";
+dots = 0;
+time = 0;
+
+# personalized colors
+color_bg = Image.Color (0.04, 0.04, 0.06);     # deep black
+color_grid = Image.Color (0.61, 0.35, 0.71);  # purple
+color_text = Image.Color (0.94, 0.94, 0.96);  # white
+color_accent = Image.Color (0.20, 0.60, 0.86); # blue
+color_warning = Image.Color (0.91, 0.30, 0.24); # red
+
+# create background
+fun create_background () {
+    bg = Image (Window.GetWidth (), Window.GetHeight ());
+    bg.Fill (color_bg);
+    
+    # draw subtle grid pattern
+    grid_spacing = 60;
+    for (x = 0; x < Window.GetWidth (); x += grid_spacing) {
+        bg.DrawRectangle (x, 0, 1, Window.GetHeight (), color_grid);
+    }
+    for (y = 0; y < Window.GetHeight (); y += grid_spacing) {
+        bg.DrawRectangle (0, y, Window.GetWidth (), 1, color_grid);
+    }
+    
+    return bg;
+}
+
+# create logo with personalization
+fun create_logo () {
+    logo = Image.Text ("milanY", 60, color_text);
+    logo_x = Window.GetWidth () / 2 - logo.GetWidth () / 2;
+    logo_y = Window.GetHeight () / 4;
+    
+    # add channel tagline
+    tagline = Image.Text ("Down with Big Brother", 20, color_accent);
+    tagline_x = Window.GetWidth () / 2 - tagline.GetWidth () / 2;
+    tagline_y = logo_y + 80;
+    
+    return [logo, tagline, logo_x, logo_y, tagline_x, tagline_y];
+}
+
+# create progress bar
+fun create_progress_bar () {
+    bar_width = Window.GetWidth () * 0.6;
+    bar_height = 20;
+    bar_x = (Window.GetWidth () - bar_width) / 2;
+    bar_y = Window.GetHeight () * 0.7;
+    
+    # background
+    bar_bg = Image (bar_width, bar_height);
+    bar_bg.Fill (color_bg);
+    bar_bg.DrawRectangle (0, 0, bar_width, bar_height, color_grid);
+    
+    # foreground (will be updated)
+    bar_fg = Image (bar_width - 4, bar_height - 4);
+    bar_fg.Fill (color_bg);
+    
+    return [bar_bg, bar_fg, bar_x, bar_y];
+}
+
+# create status text
+fun create_status_text () {
+    status_text = Image.Text ("INITIALIZING SYSTEM", 24, color_accent);
+    status_x = Window.GetWidth () / 2 - status_text.GetWidth () / 2;
+    status_y = Window.GetHeight () * 0.8;
+    
+    return [status_text, status_x, status_y];
+}
+
+# create animated dots
+fun create_dots () {
+    dot_size = 8;
+    dot_spacing = 20;
+    dots_y = Window.GetHeight () * 0.85;
+    dots_x = Window.GetWidth () / 2 - (3 * dot_spacing) / 2;
+    
+    dots = [];
+    for (i = 0; i < 3; i++) {
+        dot = Image (dot_size, dot_size);
+        dot.Fill (color_grid);
+        dots[i] = [dot, dots_x + i * dot_spacing, dots_y];
+    }
+    
+    return dots;
+}
+
+# update progress
+fun update_progress () {
+    progress_bar = progress_bar + 0.02;
+    if (progress_bar > 1.0) {
+        progress_bar = 0.0;
+    }
+    
+    # update status messages based on progress
+    if (progress_bar < 0.2) {
+        status = "LOADING KERNEL MODULES";
+    } else if (progress_bar < 0.4) {
+        status = "INITIALIZING PRIVACY SERVICES";
+    } else if (progress_bar < 0.6) {
+        status = "MOUNTING SECURE FILESYSTEMS";
+    } else if (progress_bar < 0.8) {
+        status = "STARTING ANONYMITY SERVICES";
+    } else {
+        status = "PREPARING DOWN WITH BIG BROTHER";
+    }
+}
+
+# draw everything
+fun draw_screen () {
+    # background
+    background = create_background ();
+    window.DrawImage (background, 0, 0);
+    
+    # logo and tagline
+    window.DrawImage (logo, logo_x, logo_y);
+    window.DrawImage (tagline, tagline_x, tagline_y);
+    
+    # progress bar
+    window.DrawImage (progress_bar_bg, bar_x, bar_y);
+    
+    # animated progress bar fill
+    bar_fill_width = (bar_fg.GetWidth () * progress_bar);
+    if (bar_fill_width > 0) {
+        bar_fill = Image (bar_fill_width, bar_fg.GetHeight ());
+        bar_fill.Fill (color_accent);
+        window.DrawImage (bar_fill, bar_x + 2, bar_y + 2);
+    }
+    
+    # status text
+    status_img = Image.Text (status, 24, color_accent);
+    status_new_x = Window.GetWidth () / 2 - status_img.GetWidth () / 2;
+    window.DrawImage (status_img, status_new_x, status_y);
+    
+    # animated dots
+    for (i = 0; i < 3; i++) {
+        dot_alpha = 1.0;
+        if (i == (time % 3)) {
+            dot_alpha = 0.3;
+        }
+        
+        dot_color = Image.Color (0.61, 0.35, 0.71, dot_alpha);
+        dot = Image (8, 8);
+        dot.Fill (dot_color);
+        window.DrawImage (dot, dots[i][1], dots[i][2]);
+    }
+    
+    time = time + 1;
+}
+
+# initialization
+fun setup_callback () {
+    progress_bar_bg = progress_bar[0];
+    progress_bar_fg = progress_bar[1];
+    bar_x = progress_bar[2];
+    bar_y = progress_bar[3];
+    
+    status_text = status[0];
+    status_x = status[1];
+    status_y = status[2];
+    
+    dots = create_dots ();
+}
+
+# progress callback
+fun progress_callback (duration) {
+    progress = duration / 100.0;
+    if (progress > 1.0) {
+        progress = 1.0;
+    }
+    update_progress ();
+}
+
+# main setup
+logo_data = create_logo ();
+logo = logo_data[0];
+tagline = logo_data[1];
+logo_x = logo_data[2];
+logo_y = logo_data[3];
+tagline_x = logo_data[4];
+tagline_y = logo_data[5];
+
+progress_bar = create_progress_bar ();
+status = create_status_text ();
+
+# setup
+Plymouth.SetUpdateStatusFunction (progress_callback);
+Plymouth.SetDisplayNormalFunction (draw_screen);
+Plymouth.SetDisplayPasswordFunction (draw_screen);
+Plymouth.SetDisplayQuestionFunction (draw_screen);
+Plymouth.SetMessageFunction (draw_screen);
+
+# initialize
+setup_callback ();
+
+# start animation
+draw_screen ();

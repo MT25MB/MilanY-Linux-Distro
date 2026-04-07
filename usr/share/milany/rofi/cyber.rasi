@@ -1,0 +1,97 @@
+/**
+ * milanY cyberpunk rofi theme
+ * futuristic hacker aesthetic
+ */
+
+configuration {
+    show-icons: false;
+    drun-display-format: "{name}";
+    disable-history: false;
+    fullscreen: false;
+    hide-scrollbar: true;
+    sidebar-mode: false;
+}
+
+* {
+    background-color: transparent;
+    text-color: #00ff00;
+    font: "JetBrains Mono Nerd Font 12";
+}
+
+window {
+    transparency: "real";
+    background-color: rgba(10, 10, 20, 0.9);
+    border: 2px;
+    border-color: #00ffff;
+    border-radius: 8px;
+    width: 60%;
+    location: center;
+    y-offset: 0;
+}
+
+mainbox {
+    background-color: transparent;
+    border: 0;
+    padding: 20px;
+}
+
+inputbar {
+    background-color: rgba(0, 0, 0, 0.5);
+    border: 1px solid #00ff00;
+    border-radius: 4px;
+    margin: 0px 0px 10px 0px;
+    padding: 8px;
+    children: [prompt, entry];
+}
+
+prompt {
+    background-color: transparent;
+    text-color: #00ffff;
+    margin: 0px 8px 0px 0px;
+}
+
+entry {
+    background-color: transparent;
+    text-color: #00ff00;
+}
+
+listview {
+    background-color: rgba(0, 0, 0, 0.3);
+    border: 1px solid #00ff00;
+    border-radius: 4px;
+    padding: 8px;
+    spacing: 4px;
+    scrollbar: false;
+}
+
+element {
+    background-color: transparent;
+    text-color: #00ff00;
+    border: 0;
+    padding: 8px;
+    border-radius: 4px;
+}
+
+element selected {
+    background-color: rgba(0, 255, 0, 0.2);
+    text-color: #00ffff;
+    border: 1px solid #00ffff;
+}
+
+button selected {
+    background-color: rgba(0, 255, 0, 0.2);
+    text-color: #00ffff;
+    border: 1px solid #00ffff;
+}
+
+message {
+    background-color: rgba(0, 0, 0, 0.5);
+    border: 1px solid #00ff00;
+    border-radius: 4px;
+    padding: 8px;
+}
+
+textbox {
+    background-color: transparent;
+    text-color: #00ff00;
+}

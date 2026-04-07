@@ -1,0 +1,568 @@
+#!/bin/bash
+# milanY privacy overlay system
+# translucentTB-like privacy status overlay
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# overlay configuration
+OVERLAY_DIR="/var/lib/milany-overlay"
+OVERLAY_CONFIG="$OVERLAY_DIR/config.json"
+OVERLAY_CACHE="$OVERLAY_DIR/cache"
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-privacy-overlay - privacy status overlay${NC}"
+    echo ""
+    echo "usage: milany-privacy-overlay [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  start                  start privacy overlay"
+    echo "  stop                   stop privacy overlay"
+    echo "  restart                restart privacy overlay"
+    echo "  mode <type>            set overlay mode"
+    echo "  position <x> <y>      set overlay position"
+    echo "  opacity <level>        set overlay opacity"
+    echo "  theme <name>           set overlay theme"
+    echo "  alerts                 enable/disable alerts"
+    echo "  config                 show configuration"
+    echo ""
+    echo "overlay modes:"
+    echo "  minimal                minimal privacy indicators"
+    echo "  detailed              detailed privacy status"
+    echo "  dashboard             full privacy dashboard"
+    echo "  threats               threat intelligence overlay"
+    echo "  network               network activity overlay"
+    echo "  system                system resources overlay"
+    echo ""
+    echo "examples:"
+    echo "  milany-privacy-overlay start"
+    echo "  milany-privacy-overlay mode detailed"
+    echo "  milany-privacy-overlay position 100 100"
+}
+
+# initialize overlay system
+init_overlay() {
+    mkdir -p "$OVERLAY_DIR"
+    mkdir -p "$OVERLAY_CACHE"
+    
+    # create default config
+    if [ ! -f "$OVERLAY_CONFIG" ]; then
+        cat > "$OVERLAY_CONFIG" << 'EOF'
+{
+    "mode": "minimal",
+    "position": {"x": 100, "y": 100},
+    "opacity": 0.8,
+    "theme": "milany",
+    "alerts_enabled": true,
+    "auto_hide": false,
+    "update_interval": 1,
+    "size": {"width": 300, "height": 200}
+}
+EOF
+    fi
+}
+
+# create minimal overlay
+create_minimal_overlay() {
+    local x_pos="$1"
+    local y_pos="$2"
+    local opacity="$3"
+    
+    # get privacy status
+    local tor_status="🔴"
+    local vpn_status="🔴"
+    local dns_status="🔴"
+    
+    if systemctl is-active --quiet tor 2>/dev/null; then
+        tor_status="🟢"
+    fi
+    
+    if ip link show | grep -q "tun" 2>/dev/null; then
+        vpn_status="🟢"
+    fi
+    
+    if systemctl is-active --quiet dnscrypt-proxy 2>/dev/null; then
+        dns_status="🟢"
+    fi
+    
+    # create overlay content
+    local overlay_content=$(cat << EOF
+<div style="background: rgba(10, 10, 15, $opacity); color: #f0f0f5; padding: 10px; border-radius: 8px; font-family: 'JetBrains Mono'; font-size: 12px;">
+<div style="display: flex; align-items: center; margin-bottom: 5px;">
+<span style="color: #9b59b6; font-weight: bold;">PRIVACY</span>
+</div>
+<div style="display: flex; justify-content: space-between;">
+<span>TOR:</span><span>$tor_status</span>
+</div>
+<div style="display: flex; justify-content: space-between;">
+<span>VPN:</span><span>$vpn_status</span>
+</div>
+<div style="display: flex; justify-content: space-between;">
+<span>DNS:</span><span>$dns_status</span>
+</div>
+</div>
+EOF
+)
+    
+    echo "$overlay_content" > "$OVERLAY_CACHE/overlay.html"
+}
+
+# create detailed overlay
+create_detailed_overlay() {
+    local x_pos="$1"
+    local y_pos="$2"
+    local opacity="$3"
+    
+    # get detailed privacy status
+    local tor_status="OFF"
+    local vpn_status="OFF"
+    local dns_status="INSECURE"
+    local firewall_status="OFF"
+    local privacy_score="0"
+    
+    if systemctl is-active --quiet tor 2>/dev/null; then
+        tor_status="ON"
+    fi
+    
+    if ip link show | grep -q "tun" 2>/dev/null; then
+        vpn_status="ON"
+    fi
+    
+    if systemctl is-active --quiet dnscrypt-proxy 2>/dev/null; then
+        dns_status="SECURE"
+    fi
+    
+    if systemctl is-active --quiet iptables 2>/dev/null; then
+        firewall_status="ON"
+    fi
+    
+    # get privacy score if available
+    if command -v milany-privacy-score >/dev/null 2>&1; then
+        privacy_score=$(milany-privacy-score check 2>/dev/null | grep "overall score" | grep -o "[0-9]*" | head -1)
+    fi
+    
+    # create detailed overlay content
+    local overlay_content=$(cat << EOF
+<div style="background: rgba(10, 10, 15, $opacity); color: #f0f0f5; padding: 15px; border-radius: 8px; font-family: 'JetBrains Mono'; font-size: 11px; min-width: 250px;">
+<div style="color: #9b59b6; font-weight: bold; margin-bottom: 10px; text-align: center;">PRIVACY STATUS</div>
+
+<div style="margin-bottom: 8px;">
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>TOR:</span><span style="color: ${tor_status//ON/#27ae60}; color: ${tor_status//OFF/#e74c3c};">$tor_status</span>
+</div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>VPN:</span><span style="color: ${vpn_status//ON/#27ae60}; color: ${vpn_status//OFF/#e74c3c};">$vpn_status</span>
+</div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>DNS:</span><span style="color: ${dns_status//SECURE/#27ae60}; color: ${dns_status//INSECURE/#e74c3c};">$dns_status</span>
+</div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>FIREWALL:</span><span style="color: ${firewall_status//ON/#27ae60}; color: ${firewall_status//OFF/#e74c3c};">$firewall_status</span>
+</div>
+</div>
+
+<div style="border-top: 1px solid #9b59b6; padding-top: 8px; margin-bottom: 8px;">
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>PRIVACY SCORE:</span><span style="color: #3498db; font-weight: bold;">$privacy_score/100</span>
+</div>
+</div>
+
+<div style="font-size: 9px; color: #7f8c8d; text-align: center;">
+$(date '+%H:%M:%S')
+</div>
+</div>
+EOF
+)
+    
+    echo "$overlay_content" > "$OVERLAY_CACHE/overlay.html"
+}
+
+# create dashboard overlay
+create_dashboard_overlay() {
+    local x_pos="$1"
+    local y_pos="$2"
+    local opacity="$3"
+    
+    # get comprehensive status
+    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | cut -d'.' -f1)
+    local mem_usage=$(free -m | awk 'NR==2{printf "%.0f", $3*100/$2}')
+    local disk_usage=$(df -h / | awk 'NR==2{print $5}' | sed 's/%//')
+    local network_activity="0"
+    local active_connections=$(ss -tuln | grep ESTABLISHED | wc -l)
+    
+    # get threat level
+    local threat_level="LOW"
+    if [ -f "/var/log/milany-threat-alerts.log" ]; then
+        local threats_today=$(grep "$(date '+%Y-%m-%d')" "/var/log/milany-threat-alerts.log" 2>/dev/null | wc -l)
+        if [ "$threats_today" -gt 5 ]; then
+            threat_level="HIGH"
+        elif [ "$threats_today" -gt 2 ]; then
+            threat_level="MEDIUM"
+        fi
+    fi
+    
+    # create dashboard content
+    local overlay_content=$(cat << EOF
+<div style="background: rgba(10, 10, 15, $opacity); color: #f0f0f5; padding: 15px; border-radius: 8px; font-family: 'JetBrains Mono'; font-size: 10px; min-width: 300px;">
+<div style="color: #9b59b6; font-weight: bold; margin-bottom: 10px; text-align: center;">milany DASHBOARD</div>
+
+<div style="margin-bottom: 10px;">
+<div style="color: #3498db; font-weight: bold; margin-bottom: 5px;">SYSTEM RESOURCES</div>
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 5px;">
+<div>CPU: <span style="color: #e74c3c;">$cpu_usage%</span></div>
+<div>MEM: <span style="color: #f39c12;">$mem_usage%</span></div>
+<div>DISK: <span style="color: #27ae60;">$disk_usage%</span></div>
+<div>NET: <span style="color: #3498db;">$network_activity</span></div>
+</div>
+</div>
+
+<div style="margin-bottom: 10px;">
+<div style="color: #9b59b6; font-weight: bold; margin-bottom: 5px;">NETWORK</div>
+<div>Connections: <span style="color: #3498db;">$active_connections</span></div>
+</div>
+
+<div style="margin-bottom: 10px;">
+<div style="color: #9b59b6; font-weight: bold; margin-bottom: 5px;">THREAT LEVEL</div>
+<div style="color: ${threat_level//LOW/#27ae60}; color: ${threat_level//MEDIUM/#f39c12}; color: ${threat_level//HIGH/#e74c3c}; font-weight: bold;">$threat_level</span></div>
+</div>
+
+<div style="font-size: 9px; color: #7f8c8d; text-align: center; border-top: 1px solid #9b59b6; padding-top: 5px;">
+$(date '+%Y-%m-%d %H:%M:%S')
+</div>
+</div>
+EOF
+)
+    
+    echo "$overlay_content" > "$OVERLAY_CACHE/overlay.html"
+}
+
+# create threat intelligence overlay
+create_threats_overlay() {
+    local x_pos="$1"
+    local y_pos="$2"
+    local opacity="$3"
+    
+    # get threat information
+    local recent_threats=""
+    local threat_count=0
+    local threat_level="LOW"
+    
+    if [ -f "/var/log/milany-threat-alerts.log" ]; then
+        recent_threats=$(tail -5 "/var/log/milany-threat-alerts.log" 2>/dev/null | grep "$(date '+%Y-%m-%d')" | tail -3)
+        threat_count=$(echo "$recent_threats" | wc -l)
+        
+        if [ $threat_count -gt 5 ]; then
+            threat_level="HIGH"
+        elif [ $threat_count -gt 2 ]; then
+            threat_level="MEDIUM"
+        fi
+    fi
+    
+    # create threats overlay content
+    local overlay_content=$(cat << EOF
+<div style="background: rgba(10, 10, 15, $opacity); color: #f0f0f5; padding: 15px; border-radius: 8px; font-family: 'JetBrains Mono'; font-size: 10px; min-width: 280px;">
+<div style="color: #e74c3c; font-weight: bold; margin-bottom: 10px; text-align: center;">THREAT INTELLIGENCE</div>
+
+<div style="margin-bottom: 10px;">
+<div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+<span>THREAT LEVEL:</span><span style="color: ${threat_level//LOW/#27ae60}; color: ${threat_level//MEDIUM/#f39c12}; color: ${threat_level//HIGH/#e74c3c}; font-weight: bold;">$threat_level</span></div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 5px;">
+<span>ACTIVE THREATS:</span><span style="color: #e74c3c;">$threat_count</span></div>
+</div>
+
+<div style="border-top: 1px solid #e74c3c; padding-top: 8px;">
+<div style="color: #e74c3c; font-weight: bold; margin-bottom: 5px;">RECENT ALERTS</div>
+<div style="font-size: 9px; max-height: 100px; overflow-y: auto;">
+$(echo "$recent_threats" | sed 's/.*\[\([^]]*\)\].*/\1/' | head -3 | sed 's/^/<div style="margin-bottom: 3px;">• /; s/$/<\/div>/')
+</div>
+</div>
+
+<div style="font-size: 8px; color: #7f8c8d; text-align: center; margin-top: 8px;">
+Last update: $(date '+%H:%M:%S')
+</div>
+</div>
+EOF
+)
+    
+    echo "$overlay_content" > "$OVERLAY_CACHE/overlay.html"
+}
+
+# create network activity overlay
+create_network_overlay() {
+    local x_pos="$1"
+    local y_pos="$2"
+    local opacity="$3"
+    
+    # get network information
+    local current_ip=$(curl -s ifconfig.me 2>/dev/null || echo "Unknown")
+    local upload_speed="0 KB/s"
+    local download_speed="0 KB/s"
+    local active_connections=$(ss -tuln | grep ESTABLISHED | wc -l)
+    local listening_ports=$(ss -tuln | grep LISTEN | wc -l)
+    
+    # get network interfaces
+    local interfaces=$(ip link show | grep -E "^[0-9]+:" | awk '{print $2}' | sed 's/://')
+    
+    # create network overlay content
+    local overlay_content=$(cat << EOF
+<div style="background: rgba(10, 10, 15, $opacity); color: #f0f0f5; padding: 15px; border-radius: 8px; font-family: 'JetBrains Mono'; font-size: 10px; min-width: 280px;">
+<div style="color: #3498db; font-weight: bold; margin-bottom: 10px; text-align: center;">NETWORK ACTIVITY</div>
+
+<div style="margin-bottom: 10px;">
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>IP:</span><span style="color: #3498db;">$current_ip</span></div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>↓ DOWNLOAD:</span><span style="color: #27ae60;">$download_speed</span></div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>↑ UPLOAD:</span><span style="color: #e74c3c;">$upload_speed</span></div>
+</div>
+
+<div style="margin-bottom: 10px;">
+<div style="color: #3498db; font-weight: bold; margin-bottom: 5px;">CONNECTIONS</div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>Active:</span><span style="color: #27ae60;">$active_connections</span></div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>Listening:</span><span style="color: #f39c12;">$listening_ports</span></div>
+</div>
+
+<div style="margin-bottom: 10px;">
+<div style="color: #3498db; font-weight: bold; margin-bottom: 5px;">INTERFACES</div>
+<div style="font-size: 9px;">
+$(echo "$interfaces" | sed 's/^/<div>• /; s/$/<\/div>/')
+</div>
+</div>
+
+<div style="font-size: 8px; color: #7f8c8d; text-align: center; margin-top: 8px;">
+$(date '+%H:%M:%S')
+</div>
+</div>
+EOF
+)
+    
+    echo "$overlay_content" > "$OVERLAY_CACHE/overlay.html"
+}
+
+# create system resources overlay
+create_system_overlay() {
+    local x_pos="$1"
+    local y_pos="$2"
+    local opacity="$3"
+    
+    # get system information
+    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | cut -d'.' -f1)
+    local mem_usage=$(free -m | awk 'NR==2{printf "%.0f", $3*100/$2}')
+    local disk_usage=$(df -h / | awk 'NR==2{print $5}' | sed 's/%//')
+    local temp="0"
+    
+    if command -v sensors >/dev/null 2>&1; then
+        temp=$(sensors 2>/dev/null | grep "Core 0" | awk '{print $3}' | sed 's/+//' | sed 's/°C//' || echo "0")
+    fi
+    
+    local uptime=$(uptime -p 2>/dev/null | sed 's/up //; s/,.*//' || echo "Unknown")
+    local load_avg=$(uptime | awk -F'load average:' '{print $2}' | sed 's/^ *//')
+    
+    # create system overlay content
+    local overlay_content=$(cat << EOF
+<div style="background: rgba(10, 10, 15, $opacity); color: #f0f0f5; padding: 15px; border-radius: 8px; font-family: 'JetBrains Mono'; font-size: 10px; min-width: 280px;">
+<div style="color: #9b59b6; font-weight: bold; margin-bottom: 10px; text-align: center;">SYSTEM RESOURCES</div>
+
+<div style="margin-bottom: 10px;">
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+<div style="text-align: center;">
+<div style="color: #e74c3c; font-weight: bold;">CPU</div>
+<div style="font-size: 18px; margin: 5px 0;">$cpu_usage%</div>
+<div style="width: 100%; height: 6px; background: #2c3e50; border-radius: 3px; margin-top: 3px;">
+<div style="width: ${cpu_usage}%; height: 100%; background: #e74c3c; border-radius: 3px;"></div>
+</div>
+</div>
+
+<div style="text-align: center;">
+<div style="color: #3498db; font-weight: bold;">MEMORY</div>
+<div style="font-size: 18px; margin: 5px 0;">$mem_usage%</div>
+<div style="width: 100%; height: 6px; background: #2c3e50; border-radius: 3px; margin-top: 3px;">
+<div style="width: ${mem_usage}%; height: 100%; background: #3498db; border-radius: 3px;"></div>
+</div>
+</div>
+</div>
+
+<div style="margin-bottom: 10px;">
+<div style="display: grid; grid-template-columns: 1fr 1fr; gap: 8px;">
+<div style="text-align: center;">
+<div style="color: #27ae60; font-weight: bold;">DISK</div>
+<div style="font-size: 18px; margin: 5px 0;">$disk_usage%</div>
+<div style="width: 100%; height: 6px; background: #2c3e50; border-radius: 3px; margin-top: 3px;">
+<div style="width: ${disk_usage}%; height: 100%; background: #27ae60; border-radius: 3px;"></div>
+</div>
+</div>
+
+<div style="text-align: center;">
+<div style="color: #f39c12; font-weight: bold;">TEMP</div>
+<div style="font-size: 18px; margin: 5px 0;">${temp}°C</div>
+<div style="width: 100%; height: 6px; background: #2c3e50; border-radius: 3px; margin-top: 3px;">
+<div style="width: $((temp > 70 ? 100 : temp * 100 / 70))%; height: 100%; background: #f39c12; border-radius: 3px;"></div>
+</div>
+</div>
+</div>
+
+<div style="border-top: 1px solid #9b59b6; padding-top: 8px;">
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>UPTIME:</span><span style="color: #7f8c8d;">$uptime</span></div>
+<div style="display: flex; justify-content: space-between; margin-bottom: 3px;">
+<span>LOAD AVG:</span><span style="color: #7f8c8d;">$load_avg</span></div>
+</div>
+
+<div style="font-size: 8px; color: #7f8c8d; text-align: center; margin-top: 8px;">
+$(date '+%Y-%m-%d %H:%M:%S')
+</div>
+</div>
+EOF
+)
+    
+    echo "$overlay_content" > "$OVERLAY_CACHE/overlay.html"
+}
+
+# display overlay using browser
+display_overlay() {
+    local mode="$1"
+    local x_pos="$2"
+    local y_pos="$3"
+    local opacity="$4"
+    
+    # create overlay content based on mode
+    case "$mode" in
+        minimal)
+            create_minimal_overlay "$x_pos" "$y_pos" "$opacity"
+            ;;
+        detailed)
+            create_detailed_overlay "$x_pos" "$y_pos" "$opacity"
+            ;;
+        dashboard)
+            create_dashboard_overlay "$x_pos" "$y_pos" "$opacity"
+            ;;
+        threats)
+            create_threats_overlay "$x_pos" "$y_pos" "$opacity"
+            ;;
+        network)
+            create_network_overlay "$x_pos" "$y_pos" "$opacity"
+            ;;
+        system)
+            create_system_overlay "$x_pos" "$y_pos" "$opacity"
+            ;;
+        *)
+            echo -e "${RED}error: unknown overlay mode '$mode'${NC}"
+            return 1
+            ;;
+    esac
+    
+    # display overlay using browser or dedicated viewer
+    if command -v firefox >/dev/null 2>&1; then
+        firefox --class="milany-overlay" --width=300 --height=200 \
+            --screen="$x_pos,$y_pos" \
+            "file://$OVERLAY_CACHE/overlay.html" &
+    elif command -v chromium >/dev/null 2>&1; then
+        chromium --class="milany-overlay" --window-position="$x_pos,$y_pos" \
+            --window-size=300,200 \
+            "file://$OVERLAY_CACHE/overlay.html" &
+    else
+        echo -e "${YELLOW}no suitable browser found for overlay${NC}"
+        echo -e "${CYAN}install firefox or chromium for overlay support${NC}"
+        return 1
+    fi
+}
+
+# start overlay system
+start_overlay() {
+    local mode=$(jq -r '.mode' "$OVERLAY_CONFIG" 2>/dev/null || echo "minimal")
+    local x_pos=$(jq -r '.position.x' "$OVERLAY_CONFIG" 2>/dev/null || echo "100")
+    local y_pos=$(jq -r '.position.y' "$OVERLAY_CONFIG" 2>/dev/null || echo "100")
+    local opacity=$(jq -r '.opacity' "$OVERLAY_CONFIG" 2>/dev/null || echo "0.8")
+    
+    echo -e "${BLUE}starting privacy overlay in $mode mode...${NC}"
+    echo -e "${CYAN}press Ctrl+C to stop${NC}"
+    
+    # continuous update loop
+    while true; do
+        display_overlay "$mode" "$x_pos" "$y_pos" "$opacity"
+        sleep 1
+    done
+}
+
+# stop overlay system
+stop_overlay() {
+    echo -e "${BLUE}stopping privacy overlay...${NC}"
+    
+    # kill overlay processes
+    pkill -f "milany-overlay" 2>/dev/null
+    pkill -f "firefox.*milany-overlay" 2>/dev/null
+    pkill -f "chromium.*milany-overlay" 2>/dev/null
+    
+    echo -e "${GREEN}privacy overlay stopped${NC}"
+}
+
+# set overlay mode
+set_mode() {
+    local mode="$1"
+    
+    if [ -z "$mode" ]; then
+        echo -e "${RED}error: mode required${NC}"
+        return 1
+    fi
+    
+    # update configuration
+    local temp_config=$(mktemp)
+    jq --arg mode "$mode" '.mode = $mode' "$OVERLAY_CONFIG" > "$temp_config"
+    mv "$temp_config" "$OVERLAY_CONFIG"
+    
+    echo -e "${GREEN}overlay mode set to: $mode${NC}"
+    
+    # restart if running
+    if pgrep -f "milany-privacy-overlay" >/dev/null; then
+        stop_overlay
+        sleep 1
+        start_overlay
+    fi
+}
+
+# main function
+main() {
+    init_overlay
+    
+    case "${1:-help}" in
+        start)
+            start_overlay
+            ;;
+        stop)
+            stop_overlay
+            ;;
+        restart)
+            stop_overlay
+            sleep 1
+            start_overlay
+            ;;
+        mode)
+            set_mode "$2"
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# handle signals
+trap 'stop_overlay; exit 0' SIGINT SIGTERM
+
+# run main function
+main "$@"

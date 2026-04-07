@@ -1,0 +1,194 @@
+# milanY i3 config
+# personalized for "Down with Big Brother" channel
+
+# basic settings
+set $mod Mod4
+set $term alacritty
+set $browser firefox
+set $files thunar
+set $editor vim
+
+# colors - personalized theme
+set_from_resource $fg i3wm.color7 #f0f0f5
+set_from_resource $bg i3wm.color2 #0a0a0f
+set_from_resource $ac i3wm.color1 #9b59b6
+
+# class                 border  backgr. text    indicator child_border
+client.focused          $ac     $bg     $fg     $ac       $ac
+client.focused_inactive $bg     $bg     $fg     $bg       $bg
+client.unfocused        $bg     $bg     $fg     $bg       $bg
+client.urgent           #e74c3c  #e74c3c  $fg     #e74c3c  #e74c3c
+client.placeholder      $bg     $bg     $fg     $bg       $bg
+client.background       $bg
+
+# font for window titles
+font pmono:pixelsize=12:pixelsize=12:pixelsize=10:pixelsize=10
+
+# use mouse+$mod to drag floating windows
+floating_modifier $mod
+
+# start a terminal
+bindsym $mod+Return exec $term
+
+# kill focused window
+bindsym $mod+Shift+q kill
+
+# rofi launcher
+bindsym $mod+d exec rofi -show drun -theme /usr/share/milany/rofi/milany.rasi
+
+# change focus
+bindsym $mod+h focus left
+bindsym $mod+j focus down
+bindsym $mod+k focus up
+bindsym $mod+l focus right
+
+# move focused window
+bindsym $mod+Shift+h move left
+bindsym $mod+Shift+j move down
+bindsym $mod+Shift+k move up
+bindsym $mod+Shift+l move right
+
+# split in horizontal orientation
+bindsym $mod+g split h
+
+# split in vertical orientation
+bindsym $mod+v split v
+
+# enter fullscreen mode for the focused container
+bindsym $mod+f fullscreen toggle
+
+# change container layout
+bindsym $mod+s layout stacking
+bindsym $mod+w layout tabbed
+bindsym $mod+e layout toggle split
+
+# toggle tiling / floating
+bindsym $mod+Shift+space floating toggle
+
+# change focus between tiling / floating windows
+bindsym $mod+space focus mode_toggle
+
+# focus the parent container
+bindsym $mod+a focus parent
+
+# focus the child container
+bindsym $mod+Shift+a focus child
+
+# workspace names
+set $ws1 "1:term"
+set $ws2 "2:web"
+set $ws3 "3:code"
+set $ws4 "4:files"
+set $ws5 "5:media"
+set $ws6 "6:comms"
+set $ws7 "7:tools"
+set $ws8 "8:net"
+set $ws9 "9:sec"
+set $ws10 "10:dwbb"
+
+# switch to workspace
+bindsym $mod+1 workspace $ws1
+bindsym $mod+2 workspace $ws2
+bindsym $mod+3 workspace $ws3
+bindsym $mod+4 workspace $ws4
+bindsym $mod+5 workspace $ws5
+bindsym $mod+6 workspace $ws6
+bindsym $mod+7 workspace $ws7
+bindsym $mod+8 workspace $ws8
+bindsym $mod+9 workspace $ws9
+bindsym $mod+0 workspace $ws10
+
+# move focused container to workspace
+bindsym $mod+Shift+1 move container to workspace $ws1
+bindsym $mod+Shift+2 move container to workspace $ws2
+bindsym $mod+Shift+3 move container to workspace $ws3
+bindsym $mod+Shift+4 move container to workspace $ws4
+bindsym $mod+Shift+5 move container to workspace $ws5
+bindsym $mod+Shift+6 move container to workspace $ws6
+bindsym $mod+Shift+7 move container to workspace $ws7
+bindsym $mod+Shift+8 move container to workspace $ws8
+bindsym $mod+Shift+9 move container to workspace $ws9
+bindsym $mod+Shift+0 move container to workspace $ws10
+
+# reload the configuration file
+bindsym $mod+Shift+c reload
+
+# restart i3 inplace
+bindsym $mod+Shift+r restart
+
+# exit i3
+bindsym $mod+Shift+e exec "i3-nagbar -t warning -m 'exit milanY?' -b 'yes' 'i3-msg exit'"
+
+# resize window
+mode "resize" {
+    bindsym h resize shrink width 10 px or 10 ppt
+    bindsym j resize grow height 10 px or 10 ppt
+    bindsym k resize shrink height 10 px or 10 ppt
+    bindsym l resize grow width 10 px or 10 ppt
+    
+    bindsym Return mode "default"
+    bindsym Escape mode "default"
+}
+bindsym $mod+r mode "resize"
+
+# app shortcuts
+bindsym $mod+Shift+b exec $browser
+bindsym $mod+Shift+f exec $files
+bindsym $mod+Shift+e exec $editor
+
+# system shortcuts
+bindsym $mod+Ctrl+l exec i3lock -c 0a0a0f
+bindsym $mod+Ctrl+s exec systemctl suspend
+bindsym $mod+Ctrl+r exec systemctl reboot
+bindsym $mod+Ctrl+p exec systemctl poweroff
+
+# volume control
+bindsym XF86AudioRaiseVolume exec amixer set Master 5%+
+bindsym XF86AudioLowerVolume exec amixer set Master 5%-
+bindsym XF86AudioMute exec amixer set Master toggle
+
+# brightness control
+bindsym XF86MonBrightnessUp exec brightnessctl set +5%
+bindsym XF86MonBrightnessDown exec brightnessctl set 5%-
+
+# screenshot
+bindsym Print exec scrot '%Y-%m-%d_%H-%M-%S_screenshot.png' -e 'mv $f ~/Pictures/'
+
+# privacy shortcuts
+bindsym $mod+Shift+t exec torbrowser-launcher
+bindsym $mod+Shift+v exec veracrypt
+
+# startup applications
+exec --no-startup-id picom --config /usr/share/milany/picom.conf
+exec --no-startup-id nitrogen --restore
+exec --no-startup-id nm-applet
+exec --no-startup-id /usr/local/bin/milany-wallpaper
+exec --no-startup-id /usr/local/bin/milany-privacy-init
+
+# workspace assignments
+assign [class="Firefox"] $ws2
+assign [class="Thunar"] $ws4
+assign [class="Virt-manager"] $ws7
+assign [class="Wireshark"] $ws8
+assign [class="Burp Suite"] $ws9
+
+# floating windows
+for_window [class="Pavucontrol"] floating enable
+for_window [class="Nitrogen"] floating enable
+for_window [class="Veracrypt"] floating enable
+for_window [title="Volume Control"] floating enable
+
+# window rules for better aesthetics
+for_window [class=".*"] border pixel 2
+for_window [window_role="pop-up"] floating enable
+for_window [window_role="task_dialog"] floating enable
+
+# gaps
+gaps inner 10
+gaps outer 5
+
+# smart gaps
+smart_gaps on
+
+# hide edge borders
+hide_edge_borders smart

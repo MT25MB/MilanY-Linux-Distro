@@ -1,0 +1,403 @@
+#!/bin/bash
+# milanY proxy manager
+# tor, vpn, and proxy management tools
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# configuration
+TOR_SOCKS_PORT="9050"
+TOR_CONTROL_PORT="9051"
+PROXY_PORT="8080"
+VPN_CONFIG_DIR="/etc/milany/vpn"
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-proxy - proxy and anonymity manager${NC}"
+    echo ""
+    echo "usage: milany-proxy <command> [options]"
+    echo ""
+    echo "commands:"
+    echo "  tor start              start tor service"
+    echo "  tor stop               stop tor service"
+    echo "  tor status             show tor status"
+    echo "  tor newcircuit         create new tor circuit"
+    echo "  tor check              check tor connectivity"
+    echo "  socks start <port>     start socks proxy"
+    echo "  socks stop             stop socks proxy"
+    echo "  vpn connect <config>   connect to vpn"
+    echo "  vpn disconnect         disconnect vpn"
+    echo "  vpn status             show vpn status"
+    echo "  chain <proxy1> <proxy2> create proxy chain"
+    echo "  test                   test anonymity"
+    echo "  info                   show current proxy info"
+    echo ""
+    echo "examples:"
+    echo "  milany-proxy tor start"
+    echo "  milany-proxy socks start 8080"
+    echo "  milany-proxy vpn connect /path/to/config.ovpn"
+    echo "  milany-proxy test"
+}
+
+# check dependencies
+check_deps() {
+    local missing=()
+    
+    if ! command -v tor >/dev/null 2>&1; then
+        missing+=("tor")
+    fi
+    
+    if ! command -v curl >/dev/null 2>&1; then
+        missing+=("curl")
+    fi
+    
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${RED}error: missing dependencies: ${missing[*]}${NC}"
+        echo "install with: pacman -S ${missing[*]}"
+        exit 1
+    fi
+}
+
+# tor functions
+tor_start() {
+    echo -e "${BLUE}starting tor service...${NC}"
+    
+    if systemctl is-active --quiet tor; then
+        echo -e "${YELLOW}tor is already running${NC}"
+        return
+    fi
+    
+    sudo systemctl start tor
+    sudo systemctl enable tor
+    
+    # wait for tor to start
+    local count=0
+    while [ $count -lt 10 ]; do
+        if systemctl is-active --quiet tor; then
+            echo -e "${GREEN}tor started successfully${NC}"
+            echo -e "${CYAN}socks proxy: 127.0.0.1:$TOR_SOCKS_PORT${NC}"
+            echo -e "${CYAN}control port: 127.0.0.1:$TOR_CONTROL_PORT${NC}"
+            return
+        fi
+        sleep 1
+        count=$((count + 1))
+    done
+    
+    echo -e "${RED}failed to start tor${NC}"
+    exit 1
+}
+
+tor_stop() {
+    echo -e "${BLUE}stopping tor service...${NC}"
+    
+    if ! systemctl is-active --quiet tor; then
+        echo -e "${YELLOW}tor is not running${NC}"
+        return
+    fi
+    
+    sudo systemctl stop tor
+    echo -e "${GREEN}tor stopped${NC}"
+}
+
+tor_status() {
+    echo -e "${CYAN}[ TOR STATUS ]${NC}"
+    
+    if systemctl is-active --quiet tor; then
+        echo -e "${WHITE}service:${NC} ${GREEN}active${NC}"
+        
+        # check if ports are listening
+        if ss -tuln | grep -q ":$TOR_SOCKS_PORT"; then
+            echo -e "${WHITE}socks port:${NC} ${GREEN}$TOR_SOCKS_PORT listening${NC}"
+        else
+            echo -e "${WHITE}socks port:${NC} ${RED}$TOR_SOCKS_PORT not listening${NC}"
+        fi
+        
+        if ss -tuln | grep -q ":$TOR_CONTROL_PORT"; then
+            echo -e "${WHITE}control port:${NC} ${GREEN}$TOR_CONTROL_PORT listening${NC}"
+        else
+            echo -e "${WHITE}control port:${NC} ${RED}$TOR_CONTROL_PORT not listening${NC}"
+        fi
+        
+        # get tor version
+        local tor_version=$(tor --version 2>/dev/null | head -1)
+        echo -e "${WHITE}version:${NC} $tor_version"
+        
+    else
+        echo -e "${WHITE}service:${NC} ${RED}inactive${NC}"
+    fi
+}
+
+tor_newcircuit() {
+    echo -e "${BLUE}creating new tor circuit...${NC}"
+    
+    if ! systemctl is-active --quiet tor; then
+        echo -e "${RED}tor is not running${NC}"
+        exit 1
+    fi
+    
+    # signal tor to create new circuit
+    echo -e "SIGNAL NEWNYM" | nc 127.0.0.1 "$TOR_CONTROL_PORT" >/dev/null 2>&1
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}new circuit created${NC}"
+    else
+        echo -e "${RED}failed to create new circuit${NC}"
+        echo "make sure control port is enabled in torrc"
+    fi
+}
+
+tor_check() {
+    echo -e "${BLUE}checking tor connectivity...${NC}"
+    
+    if ! systemctl is-active --quiet tor; then
+        echo -e "${RED}tor is not running${NC}"
+        exit 1
+    fi
+    
+    # check ip through tor
+    local tor_ip=$(curl --socks5 127.0.0.1:"$TOR_SOCKS_PORT" -s ipinfo.io/ip 2>/dev/null)
+    local real_ip=$(curl -s ipinfo.io/ip 2>/dev/null)
+    
+    if [ -n "$tor_ip" ]; then
+        echo -e "${GREEN}tor is working${NC}"
+        echo -e "${WHITE}real ip:${NC} $real_ip"
+        echo -e "${WHITE}tor ip:${NC} $tor_ip"
+        
+        if [ "$tor_ip" != "$real_ip" ]; then
+            echo -e "${GREEN}anonymity confirmed${NC}"
+        else
+            echo -e "${YELLOW}warning: ip addresses match - tor may not be working properly${NC}"
+        fi
+    else
+        echo -e "${RED}tor check failed${NC}"
+    fi
+}
+
+# socks proxy functions
+socks_start() {
+    local port="${1:-$PROXY_PORT}"
+    
+    echo -e "${BLUE}starting socks proxy on port $port...${NC}"
+    
+    # check if port is available
+    if ss -tuln | grep -q ":$port"; then
+        echo -e "${RED}port $port is already in use${NC}"
+        exit 1
+    fi
+    
+    # start ssh socks proxy (requires a remote server)
+    echo -e "${YELLOW}note: this requires a remote ssh server${NC}"
+    echo -e "${CYAN}usage: ssh -D $port -C -N user@server${NC}"
+    echo -e "${CYAN}or configure in ~/.ssh/config${NC}"
+}
+
+socks_stop() {
+    echo -e "${BLUE}stopping socks proxy...${NC}"
+    
+    # kill ssh socks processes
+    pkill -f "ssh -D" 2>/dev/null
+    echo -e "${GREEN}socks proxy stopped${NC}"
+}
+
+# vpn functions
+vpn_connect() {
+    local config="$1"
+    
+    if [ -z "$config" ]; then
+        echo -e "${RED}error: vpn config file required${NC}"
+        exit 1
+    fi
+    
+    if [ ! -f "$config" ]; then
+        echo -e "${RED}error: config file not found${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}connecting to vpn...${NC}"
+    
+    # check if openvpn is available
+    if ! command -v openvpn >/dev/null 2>&1; then
+        echo -e "${RED}error: openvpn not found${NC}"
+        echo "install with: pacman -S openvpn"
+        exit 1
+    fi
+    
+    # start openvpn
+    sudo openvpn --config "$config" --daemon
+    
+    echo -e "${GREEN}vpn connection initiated${NC}"
+    echo -e "${CYAN}check status with: milany-proxy vpn status${NC}"
+}
+
+vpn_disconnect() {
+    echo -e "${BLUE}disconnecting vpn...${NC}"
+    
+    # kill openvpn processes
+    sudo pkill -f openvpn 2>/dev/null
+    echo -e "${GREEN}vpn disconnected${NC}"
+}
+
+vpn_status() {
+    echo -e "${CYAN}[ VPN STATUS ]${NC}"
+    
+    # check tun interface
+    if ip link show | grep -q "tun"; then
+        echo -e "${WHITE}tunnel interface:${NC} ${GREEN}active${NC}"
+        
+        local tun_ip=$(ip addr show tun0 2>/dev/null | grep "inet " | awk '{print $2}' || echo "unknown")
+        echo -e "${WHITE}tunnel ip:${NC} $tun_ip"
+    else
+        echo -e "${WHITE}tunnel interface:${NC} ${RED}inactive${NC}"
+    fi
+    
+    # check openvpn processes
+    local openvpn_processes=$(pgrep -f openvpn | wc -l)
+    echo -e "${WHITE}openvpn processes:${NC} $openvpn_processes"
+}
+
+# proxy chain
+proxy_chain() {
+    local proxy1="$1"
+    local proxy2="$2"
+    
+    if [ -z "$proxy1" ] || [ -z "$proxy2" ]; then
+        echo -e "${RED}error: two proxies required for chaining${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}setting up proxy chain...${NC}"
+    echo -e "${WHITE}proxy 1:${NC} $proxy1"
+    echo -e "${WHITE}proxy 2:${NC} $proxy2"
+    
+    echo -e "${YELLOW}note: proxy chaining requires additional configuration${NC}"
+    echo -e "${CYAN}consider using proxychains or similar tools${NC}"
+}
+
+# test anonymity
+test_anonymity() {
+    echo -e "${BLUE}testing anonymity...${NC}"
+    
+    # test without proxy
+    echo -e "${CYAN}[ DIRECT CONNECTION ]${NC}"
+    local direct_ip=$(curl -s ipinfo.io/ip 2>/dev/null)
+    local direct_location=$(curl -s ipinfo.io/city 2>/dev/null)
+    echo -e "${WHITE}ip:${NC} $direct_ip"
+    echo -e "${WHITE}location:${NC} $direct_location"
+    echo ""
+    
+    # test tor
+    if systemctl is-active --quiet tor; then
+        echo -e "${CYAN}[ TOR CONNECTION ]${NC}"
+        local tor_ip=$(curl --socks5 127.0.0.1:"$TOR_SOCKS_PORT" -s ipinfo.io/ip 2>/dev/null)
+        local tor_location=$(curl --socks5 127.0.0.1:"$TOR_SOCKS_PORT" -s ipinfo.io/city 2>/dev/null)
+        echo -e "${WHITE}ip:${NC} $tor_ip"
+        echo -e "${WHITE}location:${NC} $tor_location"
+        
+        if [ "$direct_ip" != "$tor_ip" ]; then
+            echo -e "${GREEN}tor is working correctly${NC}"
+        else
+            echo -e "${RED}tor may not be working${NC}"
+        fi
+        echo ""
+    fi
+    
+    # test dns leaks
+    echo -e "${CYAN}[ DNS LEAK TEST ]${NC}"
+    local dns_servers=$(curl -s ifconfig.me/all.json | jq -r '.dns_servers[]' 2>/dev/null || echo "test failed")
+    echo -e "${WHITE}dns servers:${NC} $dns_servers"
+    
+    if echo "$dns_servers" | grep -q "127.0.0.1"; then
+        echo -e "${GREEN}no obvious dns leaks detected${NC}"
+    else
+        echo -e "${YELLOW}potential dns leak - consider using dnscrypt-proxy${NC}"
+    fi
+}
+
+# show proxy info
+show_info() {
+    echo -e "${CYAN}[ CURRENT PROXY STATUS ]${NC}"
+    
+    # tor status
+    tor_status
+    echo ""
+    
+    # vpn status
+    vpn_status
+    echo ""
+    
+    # socks proxy status
+    echo -e "${WHITE}socks processes:${NC} $(pgrep -f "ssh -D" | wc -l)"
+    
+    # environment variables
+    echo -e "${WHITE}http_proxy:${NC} ${http_proxy:-not set}"
+    echo -e "${WHITE}https_proxy:${NC} ${https_proxy:-not set}"
+    echo -e "${WHITE}socks_proxy:${NC} ${socks_proxy:-not set}"
+}
+
+# main function
+main() {
+    if [ $# -lt 1 ]; then
+        show_help
+        exit 1
+    fi
+    
+    check_deps
+    
+    local command="$1"
+    shift
+    
+    case "$command" in
+        tor)
+            case "${1:-status}" in
+                start) tor_start ;;
+                stop) tor_stop ;;
+                status) tor_status ;;
+                newcircuit) tor_newcircuit ;;
+                check) tor_check ;;
+                *) echo -e "${RED}error: unknown tor command${NC}" ;;
+            esac
+            ;;
+        socks)
+            case "${1:-status}" in
+                start) socks_start "$2" ;;
+                stop) socks_stop ;;
+                *) echo -e "${RED}error: unknown socks command${NC}" ;;
+            esac
+            ;;
+        vpn)
+            case "${1:-status}" in
+                connect) vpn_connect "$2" ;;
+                disconnect) vpn_disconnect ;;
+                status) vpn_status ;;
+                *) echo -e "${RED}error: unknown vpn command${NC}" ;;
+            esac
+            ;;
+        chain)
+            proxy_chain "$1" "$2"
+            ;;
+        test)
+            test_anonymity
+            ;;
+        info)
+            show_info
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# run main function
+main "$@"

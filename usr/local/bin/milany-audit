@@ -1,0 +1,557 @@
+#!/bin/bash
+# milanY privacy audit suite
+# comprehensive system privacy and security auditing
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# audit configuration
+AUDIT_DIR="/var/log/milany-audits"
+REPORT_DIR="/tmp/milany-audit-reports"
+SEVERITY_LEVELS=("low" "medium" "high" "critical")
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-audit - comprehensive privacy audit suite${NC}"
+    echo ""
+    echo "usage: milany-audit [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  full                   run complete privacy audit"
+    echo "  quick                  run quick privacy check"
+    echo "  network                audit network privacy"
+    echo "  system                 audit system security"
+    echo "  applications           audit application privacy"
+    echo "  encryption             audit encryption status"
+    echo "  files                  audit file permissions"
+    echo "  services               audit running services"
+    echo "  report                 generate audit report"
+    echo "  history                show audit history"
+    echo ""
+    echo "options:"
+    echo "  -o, --output <file>    save report to file"
+    echo "  -s, --severity <level> filter by severity (low/medium/high/critical)"
+    echo "  -f, --format <format>   output format (text/json/xml)"
+    echo "  -v, --verbose           detailed output"
+    echo ""
+    echo "examples:"
+    echo "  milany-audit full"
+    echo "  milany-audit network --severity high"
+    echo "  milany-audit report --output audit-report.txt"
+}
+
+# initialize audit system
+init_audit() {
+    mkdir -p "$AUDIT_DIR"
+    mkdir -p "$REPORT_DIR"
+    
+    # create audit log
+    local audit_log="$AUDIT_DIR/audit-$(date +%Y%m%d-%H%M%S).log"
+    touch "$audit_log"
+    echo "$audit_log"
+}
+
+# log audit finding
+log_finding() {
+    local severity="$1"
+    local category="$2"
+    local description="$3"
+    local recommendation="$4"
+    local audit_log="$5"
+    
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    echo "$timestamp|$severity|$category|$description|$recommendation" >> "$audit_log"
+    
+    # show immediate alert for critical findings
+    if [ "$severity" = "critical" ]; then
+        echo -e "${RED}CRITICAL: $description${NC}"
+    fi
+}
+
+# audit network privacy
+audit_network() {
+    echo -e "${BLUE}auditing network privacy...${NC}"
+    
+    local audit_log="$1"
+    local findings=0
+    
+    # check tor status
+    if systemctl is-active --quiet tor; then
+        echo -e "${GREEN}✓ tor service is active${NC}"
+    else
+        echo -e "${RED}✗ tor service is not active${NC}"
+        log_finding "high" "network" "tor service not running" "enable tor service" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check dns encryption
+    if systemctl is-active --quiet dnscrypt-proxy; then
+        echo -e "${GREEN}✓ dnscrypt-proxy is active${NC}"
+    else
+        echo -e "${RED}✗ dnscrypt-proxy is not active${NC}"
+        log_finding "high" "network" "encrypted dns not configured" "enable dnscrypt-proxy" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check firewall
+    if systemctl is-active --quiet iptables; then
+        echo -e "${GREEN}✓ firewall is active${NC}"
+    else
+        echo -e "${RED}✗ firewall is not active${NC}"
+        log_finding "critical" "network" "firewall not running" "enable and configure firewall" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check open ports
+    local open_ports=$(ss -tuln | grep LISTEN | wc -l)
+    if [ "$open_ports" -gt 10 ]; then
+        echo -e "${YELLOW}⚠ many open ports detected: $open_ports${NC}"
+        log_finding "medium" "network" "excessive open ports" "review and close unnecessary ports" "$audit_log"
+        findings=$((findings + 1))
+    else
+        echo -e "${GREEN}✓ reasonable number of open ports: $open_ports${NC}"
+    fi
+    
+    # check vpn status
+    if ip link show | grep -q "tun"; then
+        echo -e "${GREEN}✓ vpn tunnel detected${NC}"
+    else
+        echo -e "${YELLOW}⚠ no vpn tunnel detected${NC}"
+        log_finding "low" "network" "no vpn connection" "consider using vpn for privacy" "$audit_log"
+    fi
+    
+    return $findings
+}
+
+# audit system security
+audit_system() {
+    echo -e "${BLUE}auditing system security...${NC}"
+    
+    local audit_log="$1"
+    local findings=0
+    
+    # check apparmor
+    if systemctl is-active --quiet apparmor; then
+        echo -e "${GREEN}✓ apparmor is active${NC}"
+    else
+        echo -e "${RED}✗ apparmor is not active${NC}"
+        log_finding "high" "system" "apparmor not enabled" "enable apparmor profiles" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check kernel hardening
+    if grep -q "kernel.dmesg_restrict = 1" /etc/sysctl.d/99-milany-security.conf 2>/dev/null; then
+        echo -e "${GREEN}✓ kernel hardening configured${NC}"
+    else
+        echo -e "${RED}✗ kernel hardening not configured${NC}"
+        log_finding "high" "system" "kernel hardening missing" "configure kernel security settings" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check secure boot
+    if [ -d /sys/firmware/efi ]; then
+        local secure_boot=$(od -An -t u1 /sys/firmware/efi/vars/SecureBoot-*/data 2>/dev/null | tr -d ' ')
+        if [ "$secure_boot" = "1" ]; then
+            echo -e "${GREEN}✓ secure boot enabled${NC}"
+        else
+            echo -e "${YELLOW}⚠ secure boot disabled${NC}"
+            log_finding "medium" "system" "secure boot disabled" "enable secure boot in bios/uefi" "$audit_log"
+            findings=$((findings + 1))
+        fi
+    fi
+    
+    # check file permissions
+    local home_perms=$(stat -c %a ~)
+    if [ "$home_perms" = "700" ]; then
+        echo -e "${GREEN}✓ home directory permissions secure: $home_perms${NC}"
+    else
+        echo -e "${RED}✗ home directory permissions insecure: $home_perms${NC}"
+        log_finding "medium" "system" "insecure home directory permissions" "chmod 700 ~" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check for tracking services
+    local tracking_services=0
+    
+    if systemctl is-enabled --quiet bluetooth 2>/dev/null; then
+        echo -e "${YELLOW}⚠ bluetooth service enabled${NC}"
+        log_finding "low" "system" "bluetooth tracking service enabled" "disable bluetooth if not needed" "$audit_log"
+        tracking_services=$((tracking_services + 1))
+    fi
+    
+    if systemctl is-enabled --quiet geoclue 2>/dev/null; then
+        echo -e "${YELLOW}⚠ geolocation service enabled${NC}"
+        log_finding "medium" "system" "geolocation tracking enabled" "disable geoclue service" "$audit_log"
+        tracking_services=$((tracking_services + 1))
+    fi
+    
+    if [ $tracking_services -eq 0 ]; then
+        echo -e "${GREEN}✓ no tracking services detected${NC}"
+    fi
+    
+    findings=$((findings + tracking_services))
+    return $findings
+}
+
+# audit application privacy
+audit_applications() {
+    echo -e "${BLUE}auditing application privacy...${NC}"
+    
+    local audit_log="$1"
+    local findings=0
+    
+    # check firefox privacy
+    if [ -f ~/.mozilla/firefox/default/user.js ]; then
+        echo -e "${GREEN}✓ firefox privacy configuration found${NC}"
+        
+        # check specific privacy settings
+        if grep -q "privacy.resistFingerprinting = true" ~/.mozilla/firefox/default/user.js; then
+            echo -e "${GREEN}✓ firefox fingerprinting protection enabled${NC}"
+        else
+            echo -e "${YELLOW}⚠ firefox fingerprinting protection disabled${NC}"
+            log_finding "medium" "applications" "firefox fingerprinting protection disabled" "enable privacy.resistFingerprinting" "$audit_log"
+            findings=$((findings + 1))
+        fi
+        
+        if grep -q "network.cookie.cookieBehavior = 1" ~/.mozilla/firefox/default/user.js; then
+            echo -e "${GREEN}✓ firefox cookie protection enabled${NC}"
+        else
+            echo -e "${YELLOW}⚠ firefox cookie protection disabled${NC}"
+            log_finding "medium" "applications" "firefox cookie protection disabled" "enable network.cookie.cookieBehavior" "$audit_log"
+            findings=$((findings + 1))
+        fi
+    else
+        echo -e "${YELLOW}⚠ firefox privacy configuration not found${NC}"
+        log_finding "low" "applications" "firefox privacy not configured" "configure firefox privacy settings" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check for telemetry
+    if systemctl is-enabled --quiet systemd-journal-upload 2>/dev/null; then
+        echo -e "${RED}✗ telemetry service enabled${NC}"
+        log_finding "high" "applications" "systemd telemetry enabled" "disable systemd-journal-upload" "$audit_log"
+        findings=$((findings + 1))
+    else
+        echo -e "${GREEN}✓ telemetry services disabled${NC}"
+    fi
+    
+    # check for insecure applications
+    if systemctl is-enabled --quiet avahi-daemon 2>/dev/null; then
+        echo -e "${RED}✗ zeroconf service enabled (privacy risk)${NC}"
+        log_finding "medium" "applications" "avahi zeroconf service enabled" "disable avahi-daemon" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    return $findings
+}
+
+# audit encryption status
+audit_encryption() {
+    echo -e "${BLUE}auditing encryption status...${NC}"
+    
+    local audit_log="$1"
+    local findings=0
+    
+    # check full disk encryption
+    if lsblk -o TYPE,MOUNTPOINT | grep -q "crypt.* /"; then
+        echo -e "${GREEN}✓ full disk encryption detected${NC}"
+    else
+        echo -e "${RED}✗ no full disk encryption detected${NC}"
+        log_finding "critical" "encryption" "no full disk encryption" "setup luks encryption" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check swap encryption
+    if grep -q "swap" /etc/crypttab 2>/dev/null; then
+        echo -e "${GREEN}✓ encrypted swap detected${NC}"
+    else
+        echo -e "${YELLOW}⚠ swap encryption not detected${NC}"
+        log_finding "medium" "encryption" "unencrypted swap" "setup encrypted swap" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check gpg keys
+    if gpg --list-secret-keys 2>/dev/null | grep -q "sec"; then
+        echo -e "${GREEN}✓ gpg encryption keys found${NC}"
+    else
+        echo -e "${YELLOW}⚠ no gpg encryption keys found${NC}"
+        log_finding "low" "encryption" "no gpg keys" "create gpg encryption keys" "$audit_log"
+        findings=$((findings + 1))
+    fi
+    
+    # check ssh hardening
+    if [ -f /etc/ssh/sshd_config ]; then
+        if grep -q "^PasswordAuthentication no" /etc/ssh/sshd_config; then
+            echo -e "${GREEN}✓ ssh password authentication disabled${NC}"
+        else
+            echo -e "${YELLOW}⚠ ssh password authentication enabled${NC}"
+            log_finding "medium" "encryption" "ssh password auth enabled" "disable password authentication in ssh" "$audit_log"
+            findings=$((findings + 1))
+        fi
+    fi
+    
+    return $findings
+}
+
+# audit file permissions
+audit_files() {
+    echo -e "${BLUE}auditing file permissions...${NC}"
+    
+    local audit_log="$1"
+    local findings=0
+    
+    # check sensitive file permissions
+    local sensitive_files=(
+        "~/.ssh/id_rsa"
+        "~/.gnupg/secring.gpg"
+        "~/.mozilla/firefox/*/key4.db"
+        "~/.local/share/keyrings/*"
+    )
+    
+    for file_pattern in "${sensitive_files[@]}"; do
+        for file in $file_pattern; do
+            if [ -f "$file" ]; then
+                local perms=$(stat -c %a "$file")
+                if [ "$perms" != "600" ] && [ "$perms" != "400" ]; then
+                    echo -e "${RED}✗ insecure permissions on $file: $perms${NC}"
+                    log_finding "medium" "files" "insecure file permissions" "chmod 600 $file" "$audit_log"
+                    findings=$((findings + 1))
+                else
+                    echo -e "${GREEN}✓ secure permissions on $file: $perms${NC}"
+                fi
+            fi
+        done
+    done
+    
+    # check for world-writable files in home
+    local world_writable=$(find ~ -type f -perm -002 2>/dev/null | wc -l)
+    if [ "$world_writable" -gt 0 ]; then
+        echo -e "${RED}✗ $world_writable world-writable files in home directory${NC}"
+        log_finding "high" "files" "world-writable files in home" "remove world-write permissions" "$audit_log"
+        findings=$((findings + 1))
+    else
+        echo -e "${GREEN}✓ no world-writable files in home directory${NC}"
+    fi
+    
+    return $findings
+}
+
+# audit running services
+audit_services() {
+    echo -e "${BLUE}auditing running services...${NC}"
+    
+    local audit_log="$1"
+    local findings=0
+    
+    # check for potentially unwanted services
+    local unwanted_services=(
+        "bluetooth"
+        "cups"
+        "avahi-daemon"
+        "geoclue"
+        "whoopsie"
+        "apport"
+        "systemd-journal-upload"
+    )
+    
+    for service in "${unwanted_services[@]}"; do
+        if systemctl is-active --quiet "$service"; then
+            echo -e "${RED}✗ unwanted service running: $service${NC}"
+            log_finding "medium" "services" "unwanted service: $service" "disable $service" "$audit_log"
+            findings=$((findings + 1))
+        fi
+    done
+    
+    # check for essential privacy services
+    local essential_services=(
+        "tor"
+        "dnscrypt-proxy"
+        "iptables"
+        "apparmor"
+    )
+    
+    for service in "${essential_services[@]}"; do
+        if ! systemctl is-active --quiet "$service"; then
+            echo -e "${YELLOW}⚠ essential privacy service not running: $service${NC}"
+            log_finding "low" "services" "privacy service not running: $service" "enable $service" "$audit_log"
+            findings=$((findings + 1))
+        fi
+    done
+    
+    return $findings
+}
+
+# run full audit
+run_full_audit() {
+    echo -e "${MAGENTA}=== milanY comprehensive privacy audit ===${NC}"
+    echo ""
+    
+    local audit_log=$(init_audit)
+    
+    local total_findings=0
+    
+    # run all audit modules
+    echo -e "${CYAN}[1/6] network privacy audit${NC}"
+    local network_findings=$(audit_network "$audit_log")
+    total_findings=$((total_findings + network_findings))
+    echo ""
+    
+    echo -e "${CYAN}[2/6] system security audit${NC}"
+    local system_findings=$(audit_system "$audit_log")
+    total_findings=$((total_findings + system_findings))
+    echo ""
+    
+    echo -e "${CYAN}[3/6] application privacy audit${NC}"
+    local app_findings=$(audit_applications "$audit_log")
+    total_findings=$((total_findings + app_findings))
+    echo ""
+    
+    echo -e "${CYAN}[4/6] encryption status audit${NC}"
+    local encryption_findings=$(audit_encryption "$audit_log")
+    total_findings=$((total_findings + encryption_findings))
+    echo ""
+    
+    echo -e "${CYAN}[5/6] file permissions audit${NC}"
+    local file_findings=$(audit_files "$audit_log")
+    total_findings=$((total_findings + file_findings))
+    echo ""
+    
+    echo -e "${CYAN}[6/6] services audit${NC}"
+    local services_findings=$(audit_services "$audit_log")
+    total_findings=$((total_findings + services_findings))
+    echo ""
+    
+    # summary
+    echo -e "${MAGENTA}=== audit summary ===${NC}"
+    echo -e "${WHITE}total findings: $total_findings${NC}"
+    
+    if [ $total_findings -eq 0 ]; then
+        echo -e "${GREEN}excellent! no privacy issues found${NC}"
+    elif [ $total_findings -le 5 ]; then
+        echo -e "${YELLOW}good privacy posture with minor issues${NC}"
+    elif [ $total_findings -le 10 ]; then
+        echo -e "${YELLOW}moderate privacy issues found${NC}"
+    else
+        echo -e "${RED}significant privacy issues found${NC}"
+    fi
+    
+    echo -e "${CYAN}audit log: $audit_log${NC}"
+    
+    return $total_findings
+}
+
+# generate audit report
+generate_report() {
+    local audit_log="$1"
+    local output_file="$2"
+    
+    if [ -z "$audit_log" ] || [ ! -f "$audit_log" ]; then
+        echo -e "${RED}error: no audit log found${NC}"
+        return 1
+    fi
+    
+    echo -e "${CYAN}generating audit report...${NC}"
+    
+    local report_content="milanY privacy audit report
+generated: $(date)
+=====================================
+
+executive summary:
+$(grep -c "|" "$audit_log") findings detected
+
+detailed findings:
+"
+    
+    # process findings
+    while IFS='|' read -r timestamp severity category description recommendation; do
+        report_content="${report_content}
+[$severity] $category
+description: $description
+recommendation: $recommendation
+timestamp: $timestamp
+---
+"
+    done < "$audit_log"
+    
+    if [ -n "$output_file" ]; then
+        echo "$report_content" > "$output_file"
+        echo -e "${GREEN}report saved to: $output_file${NC}"
+    else
+        echo "$report_content"
+    fi
+}
+
+# show audit history
+show_history() {
+    echo -e "${CYAN}[ audit history ]${NC}"
+    echo ""
+    
+    if [ ! -d "$AUDIT_DIR" ]; then
+        echo -e "${YELLOW}no audit history found${NC}"
+        return
+    fi
+    
+    ls -la "$AUDIT_DIR"/*.log 2>/dev/null | while read -r line; do
+        local audit_file=$(echo "$line" | awk '{print $9}')
+        local audit_date=$(basename "$audit_file" .log | sed 's/audit-//')
+        local findings_count=$(grep -c "|" "$audit_file" 2>/dev/null || echo 0)
+        
+        echo -e "${WHITE}$audit_date: $findings_count findings${NC}"
+    done
+}
+
+# main function
+main() {
+    case "${1:-help}" in
+        full)
+            run_full_audit
+            ;;
+        quick)
+            echo -e "${BLUE}running quick privacy check...${NC}"
+            audit_network ""
+            ;;
+        network)
+            audit_network "$(init_audit)"
+            ;;
+        system)
+            audit_system "$(init_audit)"
+            ;;
+        applications)
+            audit_applications "$(init_audit)"
+            ;;
+        encryption)
+            audit_encryption "$(init_audit)"
+            ;;
+        files)
+            audit_files "$(init_audit)"
+            ;;
+        services)
+            audit_services "$(init_audit)"
+            ;;
+        report)
+            generate_report "$2" "$3"
+            ;;
+        history)
+            show_history
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# run main function
+main "$@"

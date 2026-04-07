@@ -1,0 +1,125 @@
+/**
+ * milanY rofi theme
+ * personalized for "Down with Big Brother" channel
+ * black, white, purple, blue, and red color scheme
+ */
+
+configuration {
+    show-icons: false;
+    drun-display-format: "{name}";
+    disable-history: false;
+    fullscreen: false;
+    hide-scrollbar: true;
+    sidebar-mode: false;
+}
+
+* {
+    background-color: transparent;
+    text-color: #f0f0f5;
+    font: "pmono 12";
+}
+
+window {
+    transparency: "real";
+    background-color: rgba(10, 10, 15, 0.95);
+    border: 2px;
+    border-color: #9b59b6;
+    border-radius: 12px;
+    width: 60%;
+    location: center;
+    y-offset: 0;
+}
+
+mainbox {
+    background-color: transparent;
+    border: 0;
+    padding: 25px;
+}
+
+inputbar {
+    background-color: rgba(155, 89, 182, 0.1);
+    border: 1px solid #9b59b6;
+    border-radius: 8px;
+    margin: 0px 0px 15px 0px;
+    padding: 12px;
+    children: [prompt, entry];
+}
+
+prompt {
+    background-color: transparent;
+    text-color: #3498db;
+    margin: 0px 10px 0px 0px;
+}
+
+entry {
+    background-color: transparent;
+    text-color: #f0f0f5;
+}
+
+listview {
+    background-color: rgba(0, 0, 0, 0.3);
+    border: 1px solid #2c3e50;
+    border-radius: 8px;
+    padding: 10px;
+    spacing: 6px;
+    scrollbar: false;
+}
+
+element {
+    background-color: transparent;
+    text-color: #f0f0f5;
+    border: 0;
+    padding: 10px;
+    border-radius: 6px;
+}
+
+element selected {
+    background-color: rgba(155, 89, 182, 0.3);
+    text-color: #f0f0f5;
+    border: 1px solid #9b59b6;
+}
+
+element normal urgent {
+    background-color: rgba(231, 76, 60, 0.3);
+    text-color: #f0f0f5;
+    border: 1px solid #e74c3c;
+}
+
+element selected urgent {
+    background-color: rgba(231, 76, 60, 0.5);
+    text-color: #f0f0f5;
+    border: 1px solid #e74c3c;
+}
+
+button selected {
+    background-color: rgba(52, 152, 219, 0.3);
+    text-color: #f0f0f5;
+    border: 1px solid #3498db;
+}
+
+message {
+    background-color: rgba(44, 62, 80, 0.8);
+    border: 1px solid #9b59b6;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+textbox {
+    background-color: transparent;
+    text-color: #f0f0f5;
+}
+
+error-message {
+    background-color: rgba(231, 76, 60, 0.8);
+    border: 1px solid #e74c3c;
+    border-radius: 8px;
+    padding: 12px;
+}
+
+/* scrollbar */
+scrollbar {
+    handle-width: 8px;
+    handle-color: #9b59b6;
+    border-color: rgba(155, 89, 182, 0.3);
+    border-radius: 4px;
+}

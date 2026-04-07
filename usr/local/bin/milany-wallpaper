@@ -1,0 +1,195 @@
+#!/bin/bash
+# milanY live wallpaper system
+# displays weather and news with cyberpunk aesthetic
+
+# configuration
+CONFIG_FILE="/etc/milany/milany.conf"
+CACHE_DIR="/tmp/milany-wallpaper"
+WALLPAPER_DIR="/usr/share/milany/wallpapers"
+UPDATE_INTERVAL=300  # 5 minutes
+
+# colors for terminal output
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# load configuration
+if [ -f "$CONFIG_FILE" ]; then
+    source "$CONFIG_FILE"
+else
+    echo -e "${RED}error: config file not found${NC}"
+    exit 1
+fi
+
+# create cache directory
+mkdir -p "$CACHE_DIR"
+
+# get location from ip or config
+get_location() {
+    if [ -n "$LOCATION" ]; then
+        echo "$LOCATION"
+        return
+    fi
+    
+    # get location from ip
+    local location=$(curl -s "http://ip-api.com/json?fields=city,country" | jq -r '.city + ", " + .country' 2>/dev/null)
+    if [ -n "$location" ] && [ "$location" != "null, null" ]; then
+        echo "$location"
+    else
+        echo "New York, US"  # fallback
+    fi
+}
+
+# get weather data
+get_weather() {
+    local location=$(get_location)
+    local weather_file="$CACHE_DIR/weather.json"
+    
+    # check if cache is fresh
+    if [ -f "$weather_file" ] && [ $(($(date +%s) - $(stat -c %Y "$weather_file"))) -lt $UPDATE_INTERVAL ]; then
+        cat "$weather_file"
+        return
+    fi
+    
+    # fetch weather data
+    local weather_data=$(curl -s "http://api.openweathermap.org/data/2.5/weather?q=$location&appid=$WEATHER_API_KEY&units=metric" 2>/dev/null)
+    
+    if [ -n "$weather_data" ]; then
+        echo "$weather_data" > "$weather_file"
+        echo "$weather_data"
+    fi
+}
+
+# get news data
+get_news() {
+    local news_file="$CACHE_DIR/news.json"
+    
+    # check if cache is fresh
+    if [ -f "$news_file" ] && [ $(($(date +%s) - $(stat -c %Y "$news_file"))) -lt $UPDATE_INTERVAL ]; then
+        cat "$news_file"
+        return
+    fi
+    
+    # fetch news data
+    local news_data=$(curl -s "https://newsapi.org/v2/top-headlines?country=us&apiKey=$NEWS_API_KEY" 2>/dev/null)
+    
+    if [ -n "$news_data" ]; then
+        echo "$news_data" > "$news_file"
+        echo "$news_data"
+    fi
+}
+
+# generate wallpaper with overlay
+generate_wallpaper() {
+    local base_wallpaper="$WALLPAPER_DIR/cyber-grid.png"
+    local output_wallpaper="$CACHE_DIR/current-wallpaper.png"
+    
+    # get data
+    local weather=$(get_weather)
+    local news=$(get_news)
+    
+    # extract weather info
+    if [ -n "$weather" ]; then
+        local temp=$(echo "$weather" | jq -r '.main.temp // "N/A"')
+        local condition=$(echo "$weather" | jq -r '.weather[0].description // "unknown"')
+        local city=$(echo "$weather" | jq -r '.name // "unknown"')
+        local humidity=$(echo "$weather" | jq -r '.main.humidity // "N/A"')
+        local wind_speed=$(echo "$weather" | jq -r '.wind.speed // "N/A"')
+    fi
+    
+    # extract news headlines
+    if [ -n "$news" ]; then
+        local headlines=$(echo "$news" | jq -r '.articles[:3] | .[] | .title' | head -3)
+    fi
+    
+    # create overlay text
+    local overlay_text="$CACHE_DIR/overlay.txt"
+    cat > "$overlay_text" << EOF
+[ SYSTEM STATUS ]
+LOCATION: $city
+TEMPERATURE: $temp°C
+CONDITION: $condition
+HUMIDITY: $humidity%
+WIND: $wind_speed m/s
+
+[ INTEL FEED ]
+$headlines
+
+[ milanY v$VERSION ]
+PRIVACY MODE: ACTIVE
+TOR STATUS: ONLINE
+DNSCRYPT: ACTIVE
+EOF
+    
+    # generate wallpaper with overlay using imagemagick
+    if command -v convert >/dev/null 2>&1; then
+        convert "$base_wallpaper" \
+            -font "JetBrains-Mono-Nerd-Font" \
+            -pointsize 14 \
+            -fill "#00ff00" \
+            -stroke "#000000" \
+            -strokewidth 1 \
+            -annotate +20+20 "$(cat "$overlay_text")" \
+            "$output_wallpaper"
+    fi
+    
+    # set wallpaper
+    if [ -f "$output_wallpaper" ]; then
+        feh --bg-scale "$output_wallpaper" 2>/dev/null || \
+        nitrogen --set-scaled "$output_wallpaper" 2>/dev/null || \
+        gsettings set org.gnome.desktop.background picture-uri "file://$output_wallpaper" 2>/dev/null
+    fi
+}
+
+# create animated wallpaper effect
+create_animation() {
+    while true; do
+        generate_wallpaper
+        sleep $UPDATE_INTERVAL
+    done
+}
+
+# main function
+main() {
+    echo -e "${CYAN}milany wallpaper system starting...${NC}"
+    
+    # check dependencies
+    if ! command -v curl >/dev/null 2>&1; then
+        echo -e "${RED}error: curl not found${NC}"
+        exit 1
+    fi
+    
+    if ! command -v jq >/dev/null 2>&1; then
+        echo -e "${RED}error: jq not found${NC}"
+        exit 1
+    fi
+    
+    # create default wallpaper if not exists
+    if [ ! -f "$WALLPAPER_DIR/cyber-grid.png" ]; then
+        mkdir -p "$WALLPAPER_DIR"
+        # create a simple cyberpunk grid pattern
+        if command -v convert >/dev/null 2>&1; then
+            convert -size 1920x1080 xc:black \
+                -stroke "#00ff00" -strokewidth 1 \
+                -draw "line 0,540 1920,540" \
+                -draw "line 960,0 960,1080" \
+                -draw "line 0,270 1920,270" \
+                -draw "line 0,810 1920,810" \
+                -draw "line 480,0 480,1080" \
+                -draw "line 1440,0 1440,1080" \
+                "$WALLPAPER_DIR/cyber-grid.png"
+        fi
+    fi
+    
+    # start animation
+    create_animation
+}
+
+# handle signals
+trap 'echo -e "${YELLOW}milany wallpaper stopping...${NC}"; exit 0' SIGTERM SIGINT
+
+# run main function
+main "$@"

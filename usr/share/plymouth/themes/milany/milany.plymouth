@@ -1,0 +1,17 @@
+[Plymouth Theme]
+Name=milanY Linux
+Description=cyberpunk boot animation for milanY linux
+ModuleName=script
+
+[script]
+ImageDir=/usr/share/plymouth/themes/milany
+ScriptFile=/usr/share/plymouth/themes/milany/milany.script
+
+[boot-up]
+UseEndAnimation=true
+
+[shutdown]
+UseEndAnimation=false
+
+[reboot]
+UseEndAnimation=false

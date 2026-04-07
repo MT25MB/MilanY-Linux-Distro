@@ -1,0 +1,338 @@
+#!/bin/bash
+# milanY cryptography tools
+# encryption and decryption utilities
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+NC='\033[0m'
+
+# temp directory for secure operations
+TEMP_DIR=$(mktemp -d -t milany-crypt.XXXXXX)
+chmod 700 "$TEMP_DIR"
+
+# cleanup function
+cleanup() {
+    rm -rf "$TEMP_DIR"
+}
+trap cleanup EXIT
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-crypt - cryptography utilities${NC}"
+    echo ""
+    echo "usage: milany-crypt <command> [options]"
+    echo ""
+    echo "commands:"
+    echo "  generate <type>       generate encryption key"
+    echo "  encrypt <file>        encrypt file with gpg"
+    echo "  decrypt <file>        decrypt gpg file"
+    echo "  hash <file>           calculate file hashes"
+    echo "  verify <file> <hash>  verify file hash"
+    echo "  shred <file>          securely delete file"
+    echo "  container <size>      create encrypted container"
+    echo "  password <length>     generate secure password"
+    echo ""
+    echo "key types: rsa, ecc, aes"
+    echo ""
+    echo "examples:"
+    echo "  milany-crypt generate aes"
+    echo "  milany-crypt encrypt secret.txt"
+    echo "  milany-crypt hash document.pdf"
+    echo "  milany-crypt password 32"
+}
+
+# generate encryption key
+generate_key() {
+    local key_type="$1"
+    
+    case "$key_type" in
+        rsa)
+            echo -e "${BLUE}generating rsa key pair...${NC}"
+            gpg --full-generate-key --expert
+            ;;
+        ecc)
+            echo -e "${BLUE}generating ecc key pair...${NC}"
+            gpg --quick-generate-key --expert --key-type ECC --curve Curve25519
+            ;;
+        aes)
+            echo -e "${BLUE}generating aes key...${NC}"
+            local key_file="$TEMP_DIR/aes.key"
+            openssl rand -hex 32 > "$key_file"
+            echo -e "${GREEN}aes key generated: $key_file${NC}"
+            cat "$key_file"
+            ;;
+        *)
+            echo -e "${RED}error: invalid key type${NC}"
+            echo "supported: rsa, ecc, aes"
+            exit 1
+            ;;
+    esac
+}
+
+# encrypt file
+encrypt_file() {
+    local file="$1"
+    
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}error: file not found${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}encrypting $file...${NC}"
+    
+    # use gpg for encryption
+    gpg -c --cipher-algo AES256 --compress-algo 1 --s2k-mode 3 --s2k-digest-algo SHA512 --s2k-count 65536 --force-mdc --no-emit-version "$file"
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}file encrypted: ${file}.gpg${NC}"
+        echo -e "${YELLOW}original file remains - shred it when done${NC}"
+    else
+        echo -e "${RED}encryption failed${NC}"
+        exit 1
+    fi
+}
+
+# decrypt file
+decrypt_file() {
+    local file="$1"
+    
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}error: file not found${NC}"
+        exit 1
+    fi
+    
+    if [[ ! "$file" == *.gpg ]]; then
+        echo -e "${RED}error: not a gpg file${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}decrypting $file...${NC}"
+    
+    gpg --output "${file%.gpg}" --decrypt "$file"
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}file decrypted: ${file%.gpg}${NC}"
+    else
+        echo -e "${RED}decryption failed${NC}"
+        exit 1
+    fi
+}
+
+# calculate file hashes
+hash_file() {
+    local file="$1"
+    
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}error: file not found${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}calculating hashes for $file...${NC}"
+    echo ""
+    
+    # calculate multiple hashes
+    echo -e "${CYAN}sha256:${NC}"
+    sha256sum "$file"
+    echo ""
+    
+    echo -e "${CYAN}sha512:${NC}"
+    sha512sum "$file"
+    echo ""
+    
+    echo -e "${CYAN}md5:${NC}"
+    md5sum "$file"
+    echo ""
+    
+    echo -e "${CYAN}sha1:${NC}"
+    sha1sum "$file"
+}
+
+# verify file hash
+verify_hash() {
+    local file="$1"
+    local expected_hash="$2"
+    
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}error: file not found${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}verifying hash for $file...${NC}"
+    
+    # determine hash type by length
+    local hash_length=${#expected_hash}
+    local hash_cmd=""
+    
+    case $hash_length in
+        32) hash_cmd="md5sum" ;;
+        40) hash_cmd="sha1sum" ;;
+        64) hash_cmd="sha256sum" ;;
+        128) hash_cmd="sha512sum" ;;
+        *)
+            echo -e "${RED}error: cannot determine hash type${NC}"
+            exit 1
+            ;;
+    esac
+    
+    local actual_hash=$($hash_cmd "$file" | awk '{print $1}')
+    
+    if [ "$actual_hash" = "$expected_hash" ]; then
+        echo -e "${GREEN}hash verified - file is intact${NC}"
+    else
+        echo -e "${RED}hash mismatch - file may be corrupted${NC}"
+        echo -e "${YELLOW}expected: $expected_hash${NC}"
+        echo -e "${YELLOW}actual:   $actual_hash${NC}"
+        exit 1
+    fi
+}
+
+# securely delete file
+shred_file() {
+    local file="$1"
+    
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}error: file not found${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}securely deleting $file...${NC}"
+    
+    # use shred for secure deletion
+    shred -vfz -n 3 "$file"
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}file securely deleted${NC}"
+    else
+        echo -e "${RED}secure deletion failed${NC}"
+        exit 1
+    fi
+}
+
+# create encrypted container
+create_container() {
+    local size="$1"
+    
+    if ! [[ "$size" =~ ^[0-9]+[MG]?$ ]]; then
+        echo -e "${RED}error: invalid size format${NC}"
+        echo "use format like: 100M, 1G, 500M"
+        exit 1
+    fi
+    
+    local container_file="$TEMP_DIR/container.img"
+    
+    echo -e "${BLUE}creating encrypted container ($size)...${NC}"
+    
+    # create container file
+    dd if=/dev/zero of="$container_file" bs=1 count=0 seek="$size" 2>/dev/null
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}failed to create container file${NC}"
+        exit 1
+    fi
+    
+    # setup loop device
+    local loop_device=$(losetup -f --show "$container_file")
+    
+    # create encrypted volume
+    echo -e "${BLUE}setting up encryption...${NC}"
+    cryptsetup luksFormat "$loop_device"
+    
+    if [ $? -ne 0 ]; then
+        losetup -d "$loop_device"
+        echo -e "${RED}failed to setup encryption${NC}"
+        exit 1
+    fi
+    
+    # open encrypted volume
+    cryptsetup open "$loop_device" milany_container
+    
+    # create filesystem
+    mkfs.ext4 /dev/mapper/milany_container
+    
+    # cleanup
+    cryptsetup close milany_container
+    losetup -d "$loop_device"
+    
+    echo -e "${GREEN}encrypted container created: $container_file${NC}"
+    echo -e "${CYAN}mount with: sudo cryptsetup open $container_file milany_container${NC}"
+    echo -e "${CYAN}then: sudo mount /dev/mapper/milany_container /mnt${NC}"
+}
+
+# generate secure password
+generate_password() {
+    local length="${1:-16}"
+    
+    if ! [[ "$length" =~ ^[0-9]+$ ]]; then
+        echo -e "${RED}error: length must be a number${NC}"
+        exit 1
+    fi
+    
+    if [ "$length" -lt 8 ] || [ "$length" -gt 128 ]; then
+        echo -e "${RED}error: length must be between 8 and 128${NC}"
+        exit 1
+    fi
+    
+    echo -e "${BLUE}generating $length character password...${NC}"
+    
+    # generate password using openssl
+    local password=$(openssl rand -base64 "$length" | tr -d "=+/" | cut -c1-"$length")
+    
+    echo -e "${GREEN}$password${NC}"
+    
+    # calculate entropy
+    local entropy=$(echo "l($length * 94) / l(2)" | bc -l 2>/dev/null || echo "unknown")
+    echo -e "${CYAN}entropy: ~$entropy bits${NC}"
+}
+
+# main function
+main() {
+    if [ $# -lt 1 ]; then
+        show_help
+        exit 1
+    fi
+    
+    local command="$1"
+    shift
+    
+    case "$command" in
+        generate)
+            generate_key "$1"
+            ;;
+        encrypt)
+            encrypt_file "$1"
+            ;;
+        decrypt)
+            decrypt_file "$1"
+            ;;
+        hash)
+            hash_file "$1"
+            ;;
+        verify)
+            verify_hash "$1" "$2"
+            ;;
+        shred)
+            shred_file "$1"
+            ;;
+        container)
+            create_container "$1"
+            ;;
+        password)
+            generate_password "$1"
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# run main function
+main "$@"

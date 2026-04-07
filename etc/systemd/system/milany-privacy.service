@@ -1,0 +1,15 @@
+[Unit]
+Description=milanY Privacy Protection Service
+After=network.target
+Wants=network.target
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+ExecStart=/usr/local/bin/milany-privacy-init
+ExecStop=/usr/local/bin/milany-privacy-cleanup
+TimeoutStartSec=60
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target

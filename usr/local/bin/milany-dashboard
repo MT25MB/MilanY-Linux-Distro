@@ -1,0 +1,300 @@
+#!/bin/bash
+# milanY system monitoring dashboard
+# real-time system information and security monitoring
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# configuration
+REFRESH_INTERVAL=5
+SHOW_NETWORK=true
+SHOW_PROCESSES=true
+SHOW_SECURITY=true
+SHOW_AI=false
+
+# terminal size check
+check_terminal() {
+    if [ "$(tput cols)" -lt 80 ] || [ "$(tput lines)" -lt 24 ]; then
+        echo -e "${RED}error: terminal too small (min 80x24)${NC}"
+        exit 1
+    fi
+}
+
+# clear screen and position cursor
+setup_display() {
+    clear
+    tput cup 0 0
+}
+
+# header
+show_header() {
+    local width=$(tput cols)
+    local title="milany system monitor v1.0.0"
+    local timestamp=$(date '+%Y-%m-%d %H:%M:%S')
+    
+    # calculate padding
+    local padding=$((($width - ${#title}) / 2))
+    local time_padding=$((($width - ${#timestamp}) / 2))
+    
+    printf "${MAGENTA}%*s${NC}\n" $padding | tr ' ' '='
+    printf "${MAGENTA}%*s${NC}\n" $padding "$title"
+    printf "${CYAN}%*s${NC}\n" $time_padding "$timestamp"
+    printf "${MAGENTA}%*s${NC}\n" $padding | tr ' ' '='
+    echo ""
+}
+
+# system information
+show_system_info() {
+    echo -e "${CYAN}[ SYSTEM INFO ]${NC}"
+    echo -e "${WHITE}kernel:${NC} $(uname -r)"
+    echo -e "${WHITE}uptime:${NC} $(uptime -p)"
+    echo -e "${WHITE}load:${NC} $(uptime | awk -F'load average:' '{print $2}')"
+    echo -e "${WHITE}users:${NC} $(who | wc -l) logged in"
+    echo ""
+}
+
+# resource usage
+show_resources() {
+    echo -e "${CYAN}[ RESOURCE USAGE ]${NC}"
+    
+    # cpu usage
+    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | awk '{print $2}' | sed 's/%us,//')
+    echo -e "${WHITE}cpu:${NC} ${cpu_usage}%"
+    
+    # memory usage
+    local mem_info=$(free -h | grep "Mem:")
+    local mem_used=$(echo $mem_info | awk '{print $3}')
+    local mem_total=$(echo $mem_info | awk '{print $2}')
+    local mem_percent=$(free | grep "Mem:" | awk '{printf "%.1f", $3/$2 * 100.0}')
+    echo -e "${WHITE}memory:${NC} $mem_used/$mem_total ($mem_percent%)"
+    
+    # disk usage
+    local disk_usage=$(df -h / | tail -1 | awk '{print $5}')
+    echo -e "${WHITE}disk:${NC} $disk_usage used"
+    
+    # temperature (if available)
+    if command -v sensors >/dev/null 2>&1; then
+        local temp=$(sensors | grep "Core 0" | awk '{print $3}' | sed 's/+//')
+        if [ -n "$temp" ]; then
+            echo -e "${WHITE}temp:${NC} $temp"
+        fi
+    fi
+    
+    echo ""
+}
+
+# network status
+show_network() {
+    if [ "$SHOW_NETWORK" = false ]; then
+        return
+    fi
+    
+    echo -e "${CYAN}[ NETWORK STATUS ]${NC}"
+    
+    # network interfaces
+    for interface in $(ip link show | grep -E '^[0-9]+:' | cut -d: -f2 | tr -d ' '); do
+        if [ "$interface" != "lo" ]; then
+            local status=$(ip link show "$interface" | grep -o 'state [A-Z]*' | cut -d' ' -f2)
+            local ip=$(ip addr show "$interface" | grep 'inet ' | awk '{print $2}' | head -1)
+            
+            if [ "$status" = "UP" ]; then
+                echo -e "${WHITE}$interface:${NC} ${GREEN}$status${NC} $ip"
+            else
+                echo -e "${WHITE}$interface:${NC} ${RED}$status${NC}"
+            fi
+        fi
+    done
+    
+    # active connections
+    local connections=$(ss -tuln | grep -c 'LISTEN\|ESTABLISHED')
+    echo -e "${WHITE}connections:${NC} $connections active"
+    
+    # tor status
+    if systemctl is-active --quiet tor; then
+        echo -e "${WHITE}tor:${NC} ${GREEN}active${NC}"
+    else
+        echo -e "${WHITE}tor:${NC} ${RED}inactive${NC}"
+    fi
+    
+    echo ""
+}
+
+# process monitoring
+show_processes() {
+    if [ "$SHOW_PROCESSES" = false ]; then
+        return
+    fi
+    
+    echo -e "${CYAN}[ TOP PROCESSES ]${NC}"
+    echo -e "${WHITE}  PID    CPU%   MEM%  COMMAND${NC}"
+    echo -e "${WHITE}  ----    ----   ----  -------${NC}"
+    
+    # top 5 processes by cpu
+    ps aux --sort=-%cpu | head -6 | tail -5 | while read line; do
+        local pid=$(echo $line | awk '{print $2}')
+        local cpu=$(echo $line | awk '{print $3}')
+        local mem=$(echo $line | awk '{print $4}')
+        local cmd=$(echo $line | awk '{print $11}' | cut -c1-15)
+        printf "  %-6s  %-5s  %-5s  %s\n" "$pid" "$cpu" "$mem" "$cmd"
+    done
+    
+    echo ""
+}
+
+# security monitoring
+show_security() {
+    if [ "$SHOW_SECURITY" = false ]; then
+        return
+    fi
+    
+    echo -e "${CYAN}[ SECURITY STATUS ]${NC}"
+    
+    # firewall status
+    if systemctl is-active --quiet iptables; then
+        echo -e "${WHITE}firewall:${NC} ${GREEN}active${NC}"
+    else
+        echo -e "${WHITE}firewall:${NC} ${RED}inactive${NC}"
+    fi
+    
+    # failed login attempts
+    local failed_logins=$(journalctl -u sshd --since "1 hour ago" | grep -c "Failed password" 2>/dev/null || echo "0")
+    if [ "$failed_logins" -gt 0 ]; then
+        echo -e "${WHITE}failed logins:${NC} ${RED}$failed_logins${NC} (last hour)"
+    else
+        echo -e "${WHITE}failed logins:${NC} ${GREEN}0${NC} (last hour)"
+    fi
+    
+    # apparmor status
+    if command -v aa-status >/dev/null 2>&1; then
+        local aa_loaded=$(aa-status 2>/dev/null | grep "profiles are loaded" | awk '{print $1}' || echo "0")
+        echo -e "${WHITE}apparmor:${NC} $aa_loaded profiles loaded"
+    fi
+    
+    # last security scan
+    local last_scan=$(find /var/log -name "*lynis*" -o -name "*rkhunter*" -mtime -1 2>/dev/null | wc -l)
+    if [ "$last_scan" -gt 0 ]; then
+        echo -e "${WHITE}security scan:${NC} ${GREEN}recent${NC}"
+    else
+        echo -e "${WHITE}security scan:${NC} ${YELLOW}overdue${NC}"
+    fi
+    
+    echo ""
+}
+
+# ai insights (if gemini key is configured)
+show_ai_insights() {
+    if [ "$SHOW_AI" = false ]; then
+        return
+    fi
+    
+    if [ -f /etc/milany/milany.conf ]; then
+        source /etc/milany/milany.conf
+        if [ -n "$GEMINI_API_KEY" ]; then
+            echo -e "${CYAN}[ AI INSIGHTS ]${NC}"
+            echo -e "${WHITE}analyzing system patterns...${NC}"
+            # placeholder for ai analysis
+            echo -e "${YELLOW}ai analysis available in full version${NC}"
+            echo ""
+        fi
+    fi
+}
+
+# alerts
+show_alerts() {
+    local alerts=()
+    
+    # check for issues
+    if [ "$(df / | tail -1 | awk '{print $5}' | sed 's/%//')" -gt 90 ]; then
+        alerts+=("disk usage critical")
+    fi
+    
+    if [ "$(free | grep Mem | awk '{printf "%.0f", $3/$2 * 100.0}')" -gt 90 ]; then
+        alerts+=("memory usage critical")
+    fi
+    
+    if systemctl is-failed --quiet; then
+        alerts+=("failed services detected")
+    fi
+    
+    # display alerts
+    if [ ${#alerts[@]} -gt 0 ]; then
+        echo -e "${RED}[ ALERTS ]${NC}"
+        for alert in "${alerts[@]}"; do
+            echo -e "${RED}  ⚠ $alert${NC}"
+        done
+        echo ""
+    fi
+}
+
+# footer
+show_footer() {
+    local width=$(tput cols)
+    echo -e "${CYAN}commands: [q]uit [r]efresh [n]etwork [p]rocesses [s]ecurity [a]i${NC}"
+    printf "${MAGENTA}%*s${NC}\n" $width | tr ' ' '-'
+}
+
+# handle user input
+handle_input() {
+    local input
+    read -t 0.1 -n 1 input 2>/dev/null || return
+    
+    case "$input" in
+        q|Q)
+            echo -e "${YELLOW}exiting...${NC}"
+            exit 0
+            ;;
+        r|R)
+            # refresh (default behavior)
+            ;;
+        n|N)
+            SHOW_NETWORK=$((!SHOW_NETWORK))
+            ;;
+        p|P)
+            SHOW_PROCESSES=$((!SHOW_PROCESSES))
+            ;;
+        s|S)
+            SHOW_SECURITY=$((!SHOW_SECURITY))
+            ;;
+        a|A)
+            SHOW_AI=$((!SHOW_AI))
+            ;;
+    esac
+}
+
+# main dashboard loop
+main() {
+    check_terminal
+    
+    echo -e "${GREEN}milany dashboard starting...${NC}"
+    echo -e "${CYAN}press 'q' to quit, 'r' to refresh${NC}"
+    sleep 2
+    
+    while true; do
+        setup_display
+        show_header
+        show_system_info
+        show_resources
+        show_network
+        show_processes
+        show_security
+        show_ai_insights
+        show_alerts
+        show_footer
+        
+        handle_input
+        sleep "$REFRESH_INTERVAL"
+    done
+}
+
+# handle signals
+trap 'echo -e "\n${YELLOW}dashboard stopped${NC}"; exit 0' SIGINT SIGTERM
+
+# run main function
+main "$@"

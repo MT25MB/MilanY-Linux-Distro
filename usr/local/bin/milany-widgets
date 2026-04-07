@@ -1,0 +1,444 @@
+#!/bin/bash
+# milanY dynamic desktop widgets system
+# rainmeter-like functionality for linux
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# widget configuration
+WIDGET_DIR="/var/lib/milany-widgets"
+WIDGET_CONFIG="$WIDGET_DIR/config.json"
+WIDGET_CACHE="$WIDGET_DIR/cache"
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-widgets - dynamic desktop widgets${NC}"
+    echo ""
+    echo "usage: milany-widgets [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  start                  start widget system"
+    echo "  stop                   stop widget system"
+    echo "  restart                restart widget system"
+    echo "  add <type> <name>     add new widget"
+    echo "  remove <name>          remove widget"
+    echo "  list                   list available widgets"
+    echo "  config <name>          configure widget"
+    echo "  position <name> <x> <y>  set widget position"
+    echo "  theme <theme>          set widget theme"
+    echo ""
+    echo "widget types:"
+    echo "  system                 system monitor widget"
+    echo "  network                network activity widget"
+    echo "  privacy                privacy status widget"
+    echo "  weather                weather widget"
+    echo "  clock                 clock widget"
+    echo "  calendar              calendar widget"
+    echo "  news                  news ticker widget"
+    echo "  threats                threat intelligence widget"
+    echo ""
+    echo "examples:"
+    echo "  milany-widgets start"
+    echo "  milany-widgets add system monitor"
+    echo "  milany-widgets position monitor 100 100"
+}
+
+# initialize widget system
+init_widgets() {
+    mkdir -p "$WIDGET_DIR"
+    mkdir -p "$WIDGET_CACHE"
+    
+    # create default config if not exists
+    if [ ! -f "$WIDGET_CONFIG" ]; then
+        cat > "$WIDGET_CONFIG" << 'EOF'
+{
+    "theme": "milany",
+    "widgets": [],
+    "global_opacity": 0.9,
+    "update_interval": 1,
+    "font_size": 12,
+    "font_family": "JetBrains Mono"
+}
+EOF
+    fi
+}
+
+# create widget window
+create_widget_window() {
+    local widget_type="$1"
+    local widget_name="$2"
+    local x_pos="$3"
+    local y_pos="$4"
+    
+    # create widget-specific content
+    local widget_content=""
+    case "$widget_type" in
+        system)
+            widget_content=$(create_system_widget)
+            ;;
+        network)
+            widget_content=$(create_network_widget)
+            ;;
+        privacy)
+            widget_content=$(create_privacy_widget)
+            ;;
+        weather)
+            widget_content=$(create_weather_widget)
+            ;;
+        clock)
+            widget_content=$(create_clock_widget)
+            ;;
+        calendar)
+            widget_content=$(create_calendar_widget)
+            ;;
+        news)
+            widget_content=$(create_news_widget)
+            ;;
+        threats)
+            widget_content=$(create_threats_widget)
+            ;;
+        *)
+            echo -e "${RED}error: unknown widget type '$widget_type'${NC}"
+            return 1
+            ;;
+    esac
+    
+    # create widget window using yad or zenity
+    if command -v yad >/dev/null 2>&1; then
+        yad --title="$widget_name" --text="$widget_content" \
+            --geometry=200x150+$x_pos+$y_pos \
+            --no-buttons --undecorated --skip-taskbar \
+            --on-top --sticky --center \
+            --font="JetBrains Mono 10" \
+            --foreground="#f0f0f5" --background="#0a0a0f" &
+    else
+        # fallback to terminal-based widget
+        create_terminal_widget "$widget_name" "$widget_content" "$x_pos" "$y_pos"
+    fi
+}
+
+# create system monitor widget
+create_system_widget() {
+    local cpu_usage=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | cut -d'.' -f1)
+    local mem_usage=$(free -m | awk 'NR==2{printf "%.0f", $3*100/$2}')
+    local disk_usage=$(df -h / | awk 'NR==2{print $5}' | sed 's/%//')
+    
+    cat << EOF
+<span color="#9b59b6">SYSTEM</span>
+<span color="#3498db">CPU: ${cpu_usage}%</span>
+<span color="#e74c3c">MEM: ${mem_usage}%</span>
+<span color="#27ae60">DISK: ${disk_usage}%</span>
+EOF
+}
+
+# create network widget
+create_network_widget() {
+    local ip=$(curl -s ifconfig.me 2>/dev/null || echo "unknown")
+    local download_speed=$(cat /proc/net/dev | grep eth0 | awk '{print $2}' 2>/dev/null || echo "0")
+    local upload_speed=$(cat /proc/net/dev | grep eth0 | awk '{print $10}' 2>/dev/null || echo "0")
+    
+    cat << EOF
+<span color="#9b59b6">NETWORK</span>
+<span color="#3498db">IP: $ip</span>
+<span color="#27ae60">↓ ${download_speed}</span>
+<span color="#e74c3c">↑ ${upload_speed}</span>
+EOF
+}
+
+# create privacy widget
+create_privacy_widget() {
+    local tor_status="off"
+    local vpn_status="off"
+    local dns_status="insecure"
+    
+    if systemctl is-active --quiet tor 2>/dev/null; then
+        tor_status="on"
+    fi
+    
+    if ip link show | grep -q "tun" 2>/dev/null; then
+        vpn_status="on"
+    fi
+    
+    if systemctl is-active --quiet dnscrypt-proxy 2>/dev/null; then
+        dns_status="secure"
+    fi
+    
+    cat << EOF
+<span color="#9b59b6">PRIVACY</span>
+<span color="#27ae60">TOR: $tor_status</span>
+<span color="#3498db">VPN: $vpn_status</span>
+<span color="#e74c3c">DNS: $dns_status</span>
+EOF
+}
+
+# create weather widget
+create_weather_widget() {
+    local weather="Loading..."
+    local temp="--"
+    local location="Unknown"
+    
+    # get weather from wttr.in (no API key needed)
+    local weather_data=$(curl -s "wttr.in/?format=3" 2>/dev/null)
+    if [ -n "$weather_data" ]; then
+        weather="$weather_data"
+    fi
+    
+    cat << EOF
+<span color="#9b59b6">WEATHER</span>
+<span color="#3498db">$weather</span>
+<span color="#27ae60">$location</span>
+EOF
+}
+
+# create clock widget
+create_clock_widget() {
+    local time=$(date '+%H:%M:%S')
+    local date=$(date '+%a, %b %d')
+    
+    cat << EOF
+<span color="#9b59b6">$time</span>
+<span color="#3498db">$date</span>
+EOF
+}
+
+# create calendar widget
+create_calendar_widget() {
+    local calendar=$(cal | head -7)
+    
+    cat << EOF
+<span color="#9b59b6">CALENDAR</span>
+<span color="#3498db">
+$(echo "$calendar" | head -1)</span>
+<span color="#f0f0f5">
+$(echo "$calendar" | tail -n +2)</span>
+EOF
+}
+
+# create news widget
+create_news_widget() {
+    local news="Loading privacy news..."
+    
+    # get privacy news from RSS (simplified)
+    if command -v curl >/dev/null 2>&1; then
+        news=$(curl -s "https://www.eff.org/rss/updates.xml" 2>/dev/null | grep -m 1 "<title>" | sed 's/<[^>]*>//g' | sed 's/^[[:space:]]*//')
+    fi
+    
+    cat << EOF
+<span color="#9b59b6">PRIVACY NEWS</span>
+<span color="#3498db">$news</span>
+EOF
+}
+
+# create threats widget
+create_threats_widget() {
+    local threat_level="Low"
+    local threats_today="0"
+    
+    # get threat level from milany-threat-intel
+    if [ -f "/var/log/milany-threat-alerts.log" ]; then
+        threats_today=$(grep "$(date '+%Y-%m-%d')" "/var/log/milany-threat-alerts.log" 2>/dev/null | wc -l)
+        if [ "$threats_today" -gt 5 ]; then
+            threat_level="High"
+        elif [ "$threats_today" -gt 2 ]; then
+            threat_level="Medium"
+        fi
+    fi
+    
+    cat << EOF
+<span color="#9b59b6">THREATS</span>
+<span color="#e74c3c">$threat_level</span>
+<span color="#3498db">$threats_today today</span>
+EOF
+}
+
+# create terminal-based widget
+create_terminal_widget() {
+    local widget_name="$1"
+    local content="$2"
+    local x_pos="$3"
+    local y_pos="$4"
+    
+    # use alacritty in borderless mode for widget
+    if command -v alacritty >/dev/null 2>&1; then
+        alacritty --title "$widget_name" \
+            --class "milany-widget" \
+            --position "$x_pos,$y_pos" \
+            --config-file "$WIDGET_DIR/alacritty-widget.conf" \
+            -e bash -c "echo '$content'; sleep 3600" &
+    fi
+}
+
+# start widget system
+start_widgets() {
+    echo -e "${BLUE}starting milanY widget system...${NC}"
+    
+    # read widget configuration
+    local widgets=$(jq -r '.widgets[]' "$WIDGET_CONFIG" 2>/dev/null)
+    
+    if [ -z "$widgets" ]; then
+        echo -e "${YELLOW}no widgets configured${NC}"
+        echo -e "${CYAN}add widgets with: milany-widgets add <type> <name>${NC}"
+        return
+    fi
+    
+    # start each widget
+    echo "$widgets" | while read -r widget; do
+        local widget_name=$(echo "$widget" | jq -r '.name')
+        local widget_type=$(echo "$widget" | jq -r '.type')
+        local widget_x=$(echo "$widget" | jq -r '.x')
+        local widget_y=$(echo "$widget" | jq -r '.y')
+        
+        create_widget_window "$widget_type" "$widget_name" "$widget_x" "$widget_y"
+        echo -e "${GREEN}started widget: $widget_name${NC}"
+    done
+    
+    echo -e "${GREEN}widget system started${NC}"
+}
+
+# stop widget system
+stop_widgets() {
+    echo -e "${BLUE}stopping milanY widget system...${NC}"
+    
+    # kill all widget processes
+    pkill -f "milany-widget" 2>/dev/null
+    pkill -f "yad.*milany" 2>/dev/null
+    
+    echo -e "${GREEN}widget system stopped${NC}"
+}
+
+# add widget
+add_widget() {
+    local widget_type="$1"
+    local widget_name="$2"
+    local x_pos="${3:-100}"
+    local y_pos="${4:-100}"
+    
+    if [ -z "$widget_type" ] || [ -z "$widget_name" ]; then
+        echo -e "${RED}error: widget type and name required${NC}"
+        return 1
+    fi
+    
+    # add widget to configuration
+    local temp_config=$(mktemp)
+    jq --arg type "$widget_type" --arg name "$widget_name" --arg x "$x_pos" --arg y "$y_pos" \
+        '.widgets += [{"type": $type, "name": $name, "x": $x, "y": $y}]' \
+        "$WIDGET_CONFIG" > "$temp_config"
+    mv "$temp_config" "$WIDGET_CONFIG"
+    
+    echo -e "${GREEN}widget '$widget_name' added${NC}"
+    
+    # start widget immediately if system is running
+    if pgrep -f "milany-widgets" >/dev/null; then
+        create_widget_window "$widget_type" "$widget_name" "$x_pos" "$y_pos"
+    fi
+}
+
+# remove widget
+remove_widget() {
+    local widget_name="$1"
+    
+    if [ -z "$widget_name" ]; then
+        echo -e "${RED}error: widget name required${NC}"
+        return 1
+    fi
+    
+    # remove widget from configuration
+    local temp_config=$(mktemp)
+    jq --arg name "$widget_name" '.widgets |= map(select(.name != $name))' \
+        "$WIDGET_CONFIG" > "$temp_config"
+    mv "$temp_config" "$WIDGET_CONFIG"
+    
+    echo -e "${GREEN}widget '$widget_name' removed${NC}"
+}
+
+# list widgets
+list_widgets() {
+    echo -e "${CYAN}[ configured widgets ]${NC}"
+    echo ""
+    
+    local widgets=$(jq -r '.widgets[]' "$WIDGET_CONFIG" 2>/dev/null)
+    
+    if [ -z "$widgets" ]; then
+        echo -e "${YELLOW}no widgets configured${NC}"
+        return
+    fi
+    
+    echo "$widgets" | while read -r widget; do
+        local widget_name=$(echo "$widget" | jq -r '.name')
+        local widget_type=$(echo "$widget" | jq -r '.type')
+        local widget_x=$(echo "$widget" | jq -r '.x')
+        local widget_y=$(echo "$widget" | jq -r '.y')
+        
+        echo -e "${WHITE}$widget_name ($widget_type) at ($widget_x,$widget_y)${NC}"
+    done
+}
+
+# set widget position
+set_position() {
+    local widget_name="$1"
+    local x_pos="$2"
+    local y_pos="$3"
+    
+    if [ -z "$widget_name" ] || [ -z "$x_pos" ] || [ -z "$y_pos" ]; then
+        echo -e "${RED}error: widget name, x, and y positions required${NC}"
+        return 1
+    fi
+    
+    # update widget position in configuration
+    local temp_config=$(mktemp)
+    jq --arg name "$widget_name" --arg x "$x_pos" --arg y "$y_pos" \
+        '.widgets |= map(if .name == $name then .x = $x | .y = $y else . end)' \
+        "$WIDGET_CONFIG" > "$temp_config"
+    mv "$temp_config" "$WIDGET_CONFIG"
+    
+    echo -e "${GREEN}widget '$widget_name' moved to ($x_pos,$y_pos)${NC}"
+}
+
+# main function
+main() {
+    init_widgets
+    
+    case "${1:-help}" in
+        start)
+            start_widgets
+            ;;
+        stop)
+            stop_widgets
+            ;;
+        restart)
+            stop_widgets
+            sleep 2
+            start_widgets
+            ;;
+        add)
+            add_widget "$2" "$3" "$4" "$5"
+            ;;
+        remove)
+            remove_widget "$2"
+            ;;
+        list)
+            list_widgets
+            ;;
+        position)
+            set_position "$2" "$3" "$4"
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# run main function
+main "$@"

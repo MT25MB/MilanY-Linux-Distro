@@ -1,0 +1,499 @@
+#!/bin/bash
+# milanY live system visualizer
+# livly-like animated system visualization
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34b'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# visualizer configuration
+VIS_DIR="/var/lib/milany-visualizer"
+VIS_CONFIG="$VIS_DIR/config.json"
+VIS_CACHE="$VIS_DIR/cache"
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-visualizer - live system visualization${NC}"
+    echo ""
+    echo "usage: milany-visualizer [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  start                  start visualization"
+    echo "  stop                   stop visualization"
+    echo "  restart                restart visualization"
+    echo "  mode <type>            set visualization mode"
+    echo "  config                 show configuration"
+    echo "  themes                 list available themes"
+    echo "  theme <name>           set theme"
+    echo "  fullscreen              toggle fullscreen mode"
+    echo "  record                 start recording"
+    echo ""
+    echo "visualization modes:"
+    echo "  matrix                 matrix rain effect"
+    echo "  waves                  audio-responsive waves"
+    echo "  particles              particle system"
+    echo "  network                network traffic visualization"
+    echo "  system                 system resource bars"
+    echo "  cyberpunk              cyberpunk grid effect"
+    echo "  dna                    dna helix animation"
+    echo ""
+    echo "examples:"
+    echo "  milany-visualizer start"
+    echo "  milany-visualizer mode matrix"
+    echo "  milany-visualizer theme milanY"
+}
+
+# initialize visualizer
+init_visualizer() {
+    mkdir -p "$VIS_DIR"
+    mkdir -p "$VIS_CACHE"
+    
+    # create default config
+    if [ ! -f "$VIS_CONFIG" ]; then
+        cat > "$VIS_CONFIG" << 'EOF'
+{
+    "mode": "matrix",
+    "theme": "milany",
+    "fullscreen": false,
+    "fps": 30,
+    "resolution": "1920x1080",
+    "audio_input": "pulse",
+    "colors": {
+        "primary": "#9b59b6",
+        "secondary": "#3498db",
+        "accent": "#e74c3c",
+        "background": "#0a0a0f"
+    }
+}
+EOF
+    fi
+}
+
+# matrix rain effect
+matrix_rain() {
+    local width=${1:-80}
+    local height=${2:-24}
+    
+    # matrix characters
+    local matrix_chars="ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789@#$%^&*()_+-=[]{}|;:,.<>?"
+    
+    while true; do
+        clear
+        
+        # generate matrix columns
+        for ((col=0; col<width; col++)); do
+            # random starting position
+            local row=$((RANDOM % height))
+            local char_length=$((5 + RANDOM % 10))
+            
+            for ((i=0; i<char_length; i++)); do
+                local current_row=$((row - i))
+                if [ $current_row -ge 0 ] && [ $current_row -lt $height ]; then
+                    # get random character
+                    local char=${matrix_chars:$((RANDOM % ${#matrix_chars})):1}
+                    
+                    # color based on position
+                    if [ $i -eq 0 ]; then
+                        # head of trail - bright white
+                        printf "\033[38;2;255;255;255m\033[%d;%dH%c\033[0m" \
+                            $current_row $col "$char"
+                    elif [ $i -lt 3 ]; then
+                        # near head - bright green
+                        printf "\033[38;2;155;255;155m\033[%d;%dH%c\033[0m" \
+                            $current_row $col "$char"
+                    else
+                        # trail - fading green
+                        local intensity=$((255 - i * 20))
+                        printf "\033[38;2;0;%d;0m\033[%d;%dH%c\033[0m" \
+                            $intensity $current_row $col "$char"
+                    fi
+                fi
+            done
+        done
+        
+        sleep 0.1
+    done
+}
+
+# audio-responsive waves
+audio_waves() {
+    local width=${1:-80}
+    local height=${2:-24}
+    
+    while true; do
+        clear
+        
+        # get audio level (simplified)
+        local audio_level=0
+        if [ -f "/proc/asound/card0/pcm0p/sub0/status" ]; then
+            audio_level=$(cat /proc/asound/card0/pcm0p/sub0/status 2>/dev/null | grep -c "running")
+        fi
+        
+        # generate wave pattern
+        for ((row=0; row<height; row++)); do
+            for ((col=0; col<width; col++)); do
+                # calculate wave value
+                local wave_value=$(echo "scale=2; s($col * 0.1) * $height/2 + $height/2" | bc -l 2>/dev/null || echo "$row")
+                local wave_row=${wave_value%.*}
+                
+                if [ "$wave_row" = "$row" ]; then
+                    # wave point with audio modulation
+                    local intensity=$((audio_level * 50 + 155))
+                    printf "\033[38;2;155;%d;255m█\033[0m" $intensity
+                elif [ $((row % 4)) -eq 0 ]; then
+                    # grid lines
+                    printf "\033[38;2;50;50;50m·\033[0m"
+                else
+                    printf " "
+                fi
+            done
+            echo
+        done
+        
+        sleep 0.05
+    done
+}
+
+# particle system
+particle_system() {
+    local width=${1:-80}
+    local height=${2:-24}
+    local particle_count=50
+    
+    # initialize particles
+    declare -A particles
+    for ((i=0; i<particle_count; i++)); do
+        particles["${i}_x"]=$((RANDOM % width))
+        particles["${i}_y"]=$((RANDOM % height))
+        particles["${i}_vx"]=$((-10 + RANDOM % 20))
+        particles["${i}_vy"]=$((-10 + RANDOM % 20))
+        particles["${i}_life"]=$((50 + RANDOM % 100))
+        particles["${i}_color"]=$((RANDOM % 3))
+    done
+    
+    while true; do
+        clear
+        
+        # create background grid
+        for ((row=0; row<height; row++)); do
+            for ((col=0; col<width; col++)); do
+                if [ $((row % 5)) -eq 0 ] && [ $((col % 10)) -eq 0 ]; then
+                    printf "\033[38;2;30;30;40m+\033[0m"
+                else
+                    printf " "
+                fi
+            done
+            echo
+        done
+        
+        # update and draw particles
+        for ((i=0; i<particle_count; i++)); do
+            local x=${particles["${i}_x"]}
+            local y=${particles["${i}_y"]}
+            local vx=${particles["${i}_vx"]}
+            local vy=${particles["${i}_vy"]}
+            local life=${particles["${i}_life"]}
+            local color=${particles["${i}_color"]}
+            
+            # update position
+            particles["${i}_x"]=$((x + vx))
+            particles["${i}_y"]=$((y + vy))
+            particles["${i}_life"]=$((life - 1))
+            
+            # bounce off walls
+            if [ $((x + vx)) -lt 0 ] || [ $((x + vx)) -ge $width ]; then
+                particles["${i}_vx"]=$(( -vx ))
+            fi
+            if [ $((y + vy)) -lt 0 ] || [ $((y + vy)) -ge $height ]; then
+                particles["${i}_vy"]=$(( -vy ))
+            fi
+            
+            # respawn dead particles
+            if [ $life -le 0 ]; then
+                particles["${i}_x"]=$((RANDOM % width))
+                particles["${i}_y"]=$((RANDOM % height))
+                particles["${i}_vx"]=$((-10 + RANDOM % 20))
+                particles["${i}_vy"]=$((-10 + RANDOM % 20))
+                particles["${i}_life"]=$((50 + RANDOM % 100))
+            fi
+            
+            # draw particle
+            local new_x=${particles["${i}_x"]}
+            local new_y=${particles["${i}_y"]}
+            
+            case $color in
+                0) printf "\033[38;2;155;89;182m●\033[0m" ;;  # purple
+                1) printf "\033[38;2;52;152;219m●\033[0m" ;;  # blue
+                2) printf "\033[38;2;231;76;60m●\033[0m" ;;   # red
+            esac
+            
+            # position cursor
+            printf "\033[%d;%dH" $((new_y + 1)) $((new_x + 1))
+        done
+        
+        sleep 0.05
+    done
+}
+
+# network traffic visualization
+network_visualization() {
+    local width=${1:-80}
+    local height=${2:-24}
+    
+    while true; do
+        clear
+        
+        # get network stats
+        local rx_bytes=$(cat /proc/net/dev | grep eth0 | awk '{print $2}' 2>/dev/null || echo "0")
+        local tx_bytes=$(cat /proc/net/dev | grep eth0 | awk '{print $10}' 2>/dev/null || echo "0")
+        
+        # normalize to 0-100 scale
+        local rx_level=$((rx_bytes % 100))
+        local tx_level=$((tx_bytes % 100))
+        
+        # draw network visualization
+        for ((row=0; row<height; row++)); do
+            for ((col=0; col<width; col++)); do
+                # calculate distance from center
+                local center_x=$((width / 2))
+                local center_y=$((height / 2))
+                local distance=$(echo "scale=2; sqrt(($col - $center_x)^2 + ($row - $center_y)^2)" | bc -l 2>/dev/null || echo "0")
+                
+                # network pulse effect
+                if (( $(echo "$distance < $rx_level / 10" | bc -l 2>/dev/null || echo "0") )); then
+                    # receiving - blue
+                    printf "\033[38;2;52;152;219m◉\033[0m"
+                elif (( $(echo "$distance < $tx_level / 10" | bc -l 2>/dev/null || echo "0") )); then
+                    # transmitting - red
+                    printf "\033[38;2;231;76;60m◈\033[0m"
+                elif [ $((row % 3)) -eq 0 ] && [ $((col % 5)) -eq 0 ]; then
+                    # grid
+                    printf "\033[38;2;50;50;50m·\033[0m"
+                else
+                    printf " "
+                fi
+            done
+            echo
+        done
+        
+        sleep 0.1
+    done
+}
+
+# system resource bars
+system_bars() {
+    local width=${1:-80}
+    local height=${2:-24}
+    
+    while true; do
+        clear
+        
+        # get system stats
+        local cpu_usage=$(top -bn1 | grep "Cpu(s)" | sed "s/.*, *\([0-9.]*\)%* id.*/\1/" | cut -d'.' -f1)
+        local mem_usage=$(free -m | awk 'NR==2{printf "%.0f", $3*100/$2}')
+        local disk_usage=$(df -h / | awk 'NR==2{print $5}' | sed 's/%//')
+        local temp=$(sensors 2>/dev/null | grep "Core 0" | awk '{print $3}' | sed 's/+//' | sed 's/°C//' || echo "0")
+        
+        # draw header
+        printf "\033[38;2;155;89;182mSYSTEM RESOURCES\033[0m\n\n"
+        
+        # CPU bar
+        printf "\033[38;2;155;89;182mCPU\033[0m "
+        for ((i=0; i<50; i++)); do
+            if [ $i -lt $((cpu_usage / 2)) ]; then
+                printf "\033[48;2;155;89;182m \033[0m"
+            else
+                printf "\033[48;2;30;30;40m \033[0m"
+            fi
+        done
+        printf " %d%%\n\n" $cpu_usage
+        
+        # Memory bar
+        printf "\033[38;2;52;152;219mMEM\033[0m "
+        for ((i=0; i<50; i++)); do
+            if [ $i -lt $((mem_usage / 2)) ]; then
+                printf "\033[48;2;52;152;219m \033[0m"
+            else
+                printf "\033[48;2;30;30;40m \033[0m"
+            fi
+        done
+        printf " %d%%\n\n" $mem_usage
+        
+        # Disk bar
+        printf "\033[38;2;231;76;60mDISK\033[0m "
+        for ((i=0; i<50; i++)); do
+            if [ $i -lt $((disk_usage / 2)) ]; then
+                printf "\033[48;2;231;76;60m \033[0m"
+            else
+                printf "\033[48;2;30;30;40m \033[0m"
+            fi
+        done
+        printf " %d%%\n\n" $disk_usage
+        
+        # Temperature bar
+        printf "\033[38;2;241;196;15mTEMP\033[0m "
+        for ((i=0; i<50; i++)); do
+            if [ $i -lt $((temp / 2)) ]; then
+                printf "\033[48;2;241;196;15m \033[0m"
+            else
+                printf "\033[48;2;30;30;40m \033[0m"
+            fi
+        done
+        printf " %d°C\n\n" $temp
+        
+        sleep 1
+    done
+}
+
+# cyberpunk grid effect
+cyberpunk_grid() {
+    local width=${1:-80}
+    local height=${2:-24}
+    
+    while true; do
+        clear
+        
+        # animated grid perspective
+        local time_offset=$(date +%s)
+        
+        for ((row=0; row<height; row++)); do
+            for ((col=0; col<width; col++)); do
+                # calculate perspective
+                local vanishing_point_x=$((width / 2))
+                local vanishing_point_y=$((height / 2))
+                
+                # distance from vanishing point
+                local dx=$((col - vanishing_point_x))
+                local dy=$((row - vanishing_point_y))
+                
+                # grid lines
+                if [ $((row % 3)) -eq 0 ] || [ $((col % 5)) -eq 0 ]; then
+                    # animated color based on time
+                    local color_offset=$(((time_offset + row + col) % 30))
+                    if [ $color_offset -lt 10 ]; then
+                        printf "\033[38;2;155;89;182m▒\033[0m"
+                    elif [ $color_offset -lt 20 ]; then
+                        printf "\033[38;2;52;152;219m▓\033[0m"
+                    else
+                        printf "\033[38;2;231;76;60m▒\033[0m"
+                    fi
+                else
+                    printf " "
+                fi
+            done
+            echo
+        done
+        
+        sleep 0.1
+    done
+}
+
+# start visualization
+start_visualizer() {
+    local mode=$(jq -r '.mode' "$VIS_CONFIG" 2>/dev/null || echo "matrix")
+    local width=$(jq -r '.resolution' "$VIS_CONFIG" 2>/dev/null | cut -d'x' -f1 || echo "80")
+    local height=$(jq -r '.resolution' "$VIS_CONFIG" 2>/dev/null | cut -d'x' -f2 || echo "24")
+    
+    echo -e "${BLUE}starting milanY visualizer in $mode mode...${NC}"
+    echo -e "${CYAN}press Ctrl+C to stop${NC}"
+    
+    case "$mode" in
+        matrix)
+            matrix_rain "$width" "$height"
+            ;;
+        waves)
+            audio_waves "$width" "$height"
+            ;;
+        particles)
+            particle_system "$width" "$height"
+            ;;
+        network)
+            network_visualization "$width" "$height"
+            ;;
+        system)
+            system_bars "$width" "$height"
+            ;;
+        cyberpunk)
+            cyberpunk_grid "$width" "$height"
+            ;;
+        *)
+            echo -e "${RED}error: unknown visualization mode '$mode'${NC}"
+            return 1
+            ;;
+    esac
+}
+
+# set visualization mode
+set_mode() {
+    local mode="$1"
+    
+    if [ -z "$mode" ]; then
+        echo -e "${RED}error: mode required${NC}"
+        return 1
+    fi
+    
+    # update configuration
+    local temp_config=$(mktemp)
+    jq --arg mode "$mode" '.mode = $mode' "$VIS_CONFIG" > "$temp_config"
+    mv "$temp_config" "$VIS_CONFIG"
+    
+    echo -e "${GREEN}visualization mode set to: $mode${NC}"
+}
+
+# list themes
+list_themes() {
+    echo -e "${CYAN}[ available themes ]${NC}"
+    echo ""
+    echo "  milanY     - default milanY theme"
+    echo "  matrix     - classic matrix green"
+    echo "  cyber      - cyberpunk neon"
+    echo "  ocean      - deep blue ocean"
+    echo "  fire       - fire and ember"
+    echo "  monochrome - black and white"
+}
+
+# main function
+main() {
+    init_visualizer
+    
+    case "${1:-help}" in
+        start)
+            start_visualizer
+            ;;
+        stop)
+            pkill -f "milany-visualizer" 2>/dev/null
+            echo -e "${GREEN}visualizer stopped${NC}"
+            ;;
+        restart)
+            pkill -f "milany-visualizer" 2>/dev/null
+            sleep 1
+            start_visualizer
+            ;;
+        mode)
+            set_mode "$2"
+            ;;
+        themes)
+            list_themes
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# handle signals
+trap 'echo -e "\n${YELLOW}visualizer stopped${NC}"; exit 0' SIGINT SIGTERM
+
+# run main function
+main "$@"

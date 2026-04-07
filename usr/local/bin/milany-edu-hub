@@ -1,0 +1,609 @@
+#!/bin/bash
+# milanY privacy education hub
+# interactive privacy and security learning platform
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# education content directory
+EDU_DIR="/usr/share/milany/education"
+PROGRESS_FILE="/var/lib/milany/edu-progress.txt"
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-edu-hub - privacy education platform${NC}"
+    echo ""
+    echo "usage: milany-edu-hub [command] [topic]"
+    echo ""
+    echo "commands:"
+    echo "  learn <topic>         start learning module"
+    echo "  list                  list available topics"
+    echo "  progress              show learning progress"
+    echo "  quiz <topic>          take quiz on topic"
+    echo "  challenge             daily privacy challenge"
+    echo "  resources             show privacy resources"
+    echo "  news                  privacy news feed"
+    echo "  tips                  daily privacy tips"
+    echo ""
+    echo "topics:"
+    echo "  basics                privacy fundamentals"
+    echo "  encryption            cryptography basics"
+    echo "  anonymity            online anonymity"
+    echo "  security             digital security"
+    echo "  networking           network privacy"
+    echo "  legal                privacy laws"
+    echo "  tools                privacy tools"
+    echo ""
+    echo "examples:"
+    echo "  milany-edu-hub learn basics"
+    echo "  milany-edu-hub quiz encryption"
+    echo "  milany-edu-hub challenge"
+}
+
+# initialize education system
+init_edu() {
+    mkdir -p "$EDU_DIR"
+    mkdir -p "$(dirname "$PROGRESS_FILE")"
+    touch "$PROGRESS_FILE"
+    
+    # create education content if not exists
+    create_education_content
+}
+
+# create education content
+create_education_content() {
+    # basics module
+    cat > "$EDU_DIR/basics.txt" << 'EOF'
+PRIVACY FUNDAMENTALS
+==================
+
+What is Privacy?
+---------------
+Privacy is the right to control your personal information and decide how it's collected,
+used, and shared. In the digital age, privacy encompasses:
+
+• Data Privacy: Control over personal data
+• Communication Privacy: Secure communications
+• Location Privacy: Control over location data
+• Browsing Privacy: Anonymous web browsing
+
+Key Principles
+--------------
+1. Data Minimization: Collect only necessary data
+2. Purpose Limitation: Use data only for stated purposes
+3. Transparency: Be open about data practices
+4. Security: Protect data from unauthorized access
+5. User Control: Give users control over their data
+
+Why Privacy Matters
+------------------
+• Prevents identity theft and fraud
+• Protects personal safety
+• Enables freedom of expression
+• Prevents manipulation and discrimination
+• Maintains democratic values
+
+Common Threats
+---------------
+• Data brokers collecting and selling personal data
+• Government surveillance programs
+• Corporate tracking and profiling
+• Social media data harvesting
+• IoT device data collection
+
+Getting Started
+---------------
+1. Use privacy-focused browsers (Firefox with privacy settings)
+2. Enable encryption (HTTPS, VPN, Tor)
+3. Use secure communication tools
+4. Regularly review privacy settings
+5. Stay informed about privacy issues
+
+Remember: Privacy is not about having something to hide,
+it's about having something to protect.
+EOF
+
+    # encryption module
+    cat > "$EDU_DIR/encryption.txt" << 'EOF'
+CRYPTOGRAPHY BASICS
+==================
+
+What is Encryption?
+------------------
+Encryption is the process of converting information into a secret code
+that can only be read by authorized parties. It uses mathematical algorithms
+to scramble data, making it unreadable without the proper key.
+
+Types of Encryption
+-------------------
+1. Symmetric Encryption: Same key for encryption and decryption
+   - Examples: AES, 3DES
+   - Fast and efficient
+   - Key distribution challenge
+
+2. Asymmetric Encryption: Different keys for encryption and decryption
+   - Examples: RSA, ECC
+   - Public/private key pairs
+   - Solves key distribution problem
+
+Common Encryption Uses
+-----------------------
+• File Encryption: Protect sensitive files (VeraCrypt, LUKS)
+• Email Encryption: Secure email communication (PGP/GPG)
+• Messaging: Encrypted messaging (Signal, Session)
+• Web Encryption: HTTPS/TLS for web traffic
+• Disk Encryption: Full disk encryption (BitLocker, FileVault)
+
+Encryption Standards
+--------------------
+• AES-256: Current standard for symmetric encryption
+• RSA-2048+: Standard for asymmetric encryption
+• ECC: Emerging standard for mobile/IoT devices
+• Quantum-Resistant: Future-proofing against quantum computers
+
+Practical Tips
+---------------
+1. Use strong, unique passwords
+2. Enable two-factor authentication
+3. Encrypt sensitive files before storage
+4. Use encrypted messaging apps
+5. Verify HTTPS connections
+6. Keep software updated
+7. Use reputable encryption tools
+
+Encryption Tools in milanY
+---------------------------
+• milany-crypt: File encryption utilities
+• GnuPG: Email and file encryption
+• LUKS: Full disk encryption
+• Tor: Anonymous communication
+EOF
+
+    # anonymity module
+    cat > "$EDU_DIR/anonymity.txt" << 'EOF'
+ONLINE ANONYMITY
+=================
+
+What is Anonymity?
+------------------
+Anonymity is the state of being unidentified or untraceable. Online anonymity
+means using the internet without revealing your identity or location.
+
+Levels of Anonymity
+--------------------
+1. Pseudonymity: Using consistent fake identity
+2. Partial Anonymity: Identity hidden from some parties
+3. Full Anonymity: Identity hidden from all parties
+
+Anonymity Techniques
+--------------------
+• Tor Network: Onion routing for anonymous browsing
+• VPN Services: Hide IP address and encrypt traffic
+• Proxy Servers: Intermediate servers for requests
+• Private Browsing: Local data protection
+• Disposable Email: Temporary email addresses
+• Cryptocurrency: Anonymous financial transactions
+
+Tor Network
+----------
+Tor (The Onion Router) is a network designed for anonymous communication:
+• Routes traffic through multiple volunteer nodes
+• Encrypts traffic at each hop (onion routing)
+• Hides your IP address from websites
+• Provides access to .onion hidden services
+
+Advantages:
+• Strong anonymity protection
+• Free and open source
+• Resists surveillance
+• Circumvents censorship
+
+Limitations:
+• Slower internet speeds
+• Some sites block Tor users
+• Exit nodes can be compromised
+• Not legal in all countries
+
+VPN Services
+------------
+VPNs (Virtual Private Networks) provide anonymity by:
+• Encrypting all internet traffic
+• Hiding your real IP address
+• Bypassing geographic restrictions
+• Protecting on public Wi-Fi
+
+Choosing a VPN:
+• No-logs policy
+• Strong encryption (AES-256)
+• Kill switch feature
+• DNS leak protection
+• Jurisdiction outside surveillance alliances
+
+Best Practices
+--------------
+1. Use Tor for sensitive activities
+2. Combine Tor + VPN for extra protection
+3. Use separate identities for different activities
+4. Avoid revealing personal information
+5. Use privacy-focused search engines
+6. Clear cookies and cache regularly
+7. Test your anonymity setup
+
+Remember: Anonymity is a tool, not absolute protection.
+Use it responsibly and legally.
+EOF
+
+    # create quiz questions
+    cat > "$EDU_DIR/quiz-questions.txt" << 'EOF'
+basics|1|What is the principle of collecting only necessary data?|Data Minimization|Data Maximization|Data Sharing|Data Collection|1
+basics|2|Which of these is NOT a common privacy threat?|Data Brokers|Government Surveillance|Corporate Tracking|Secure Encryption|4
+encryption|1|What does AES stand for?|Advanced Encryption Standard|Asymmetric Encryption System|Anonymous Email System|Automated Encryption Service|1
+encryption|2|How many keys are used in asymmetric encryption?|1|2|3|4|2
+anonymity|1|What does Tor stand for?|The Onion Router|Total Online Routing|Transparent Online Routing|The Onion Network|1
+anonymity|2|What is a major limitation of using Tor?|Faster speeds|Better security|Slower speeds|More features|3
+EOF
+}
+
+# list available topics
+list_topics() {
+    echo -e "${CYAN}[ available learning modules ]${NC}"
+    echo ""
+    
+    for topic_file in "$EDU_DIR"/*.txt; do
+        if [ -f "$topic_file" ]; then
+            local topic=$(basename "$topic_file" .txt)
+            local progress=$(get_progress "$topic")
+            
+            case $progress in
+                100)
+                    echo -e "${GREEN}✓ $topic (completed)${NC}"
+                    ;;
+                0)
+                    echo -e "${WHITE}○ $topic (not started)${NC}"
+                    ;;
+                *)
+                    echo -e "${YELLOW}◐ $topic (${progress}% complete)${NC}"
+                    ;;
+            esac
+        fi
+    done
+}
+
+# learn topic
+learn_topic() {
+    local topic="$1"
+    
+    if [ -z "$topic" ]; then
+        echo -e "${RED}error: topic required${NC}"
+        echo "available topics: $(list_topics | grep -o '[a-z]*' | tr '\n' ' ')"
+        return 1
+    fi
+    
+    local topic_file="$EDU_DIR/$topic.txt"
+    
+    if [ ! -f "$topic_file" ]; then
+        echo -e "${RED}error: topic '$topic' not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${MAGENTA}=== learning: $topic ===${NC}"
+    echo ""
+    
+    # display content with pagination
+    local line_count=0
+    local page_size=20
+    
+    while IFS= read -r line; do
+        echo -e "${WHITE}$line${NC}"
+        line_count=$((line_count + 1))
+        
+        if [ $((line_count % page_size)) -eq 0 ]; then
+            echo -e "${CYAN}--- press Enter to continue ---${NC}"
+            read -r
+        fi
+    done < "$topic_file"
+    
+    # mark as completed
+    set_progress "$topic" 100
+    echo ""
+    echo -e "${GREEN}module completed! progress saved.${NC}"
+}
+
+# get user progress
+get_progress() {
+    local topic="$1"
+    
+    if [ -f "$PROGRESS_FILE" ]; then
+        grep "^$topic|" "$PROGRESS_FILE" 2>/dev/null | cut -d'|' -f2 || echo "0"
+    else
+        echo "0"
+    fi
+}
+
+# set user progress
+set_progress() {
+    local topic="$1"
+    local progress="$2"
+    
+    # create temporary file
+    local temp_file=$(mktemp)
+    
+    # update progress file
+    if [ -f "$PROGRESS_FILE" ]; then
+        grep -v "^$topic|" "$PROGRESS_FILE" > "$temp_file" 2>/dev/null
+    fi
+    
+    echo "$topic|$progress" >> "$temp_file"
+    mv "$temp_file" "$PROGRESS_FILE"
+}
+
+# show progress
+show_progress() {
+    echo -e "${CYAN}[ learning progress ]${NC}"
+    echo ""
+    
+    if [ ! -f "$PROGRESS_FILE" ]; then
+        echo -e "${YELLOW}no learning progress found${NC}"
+        return
+    fi
+    
+    local total_topics=$(ls "$EDU_DIR"/*.txt 2>/dev/null | wc -l)
+    local completed_topics=0
+    local overall_progress=0
+    
+    while IFS='|' read -r topic progress; do
+        if [ "$progress" = "100" ]; then
+            completed_topics=$((completed_topics + 1))
+        fi
+        overall_progress=$((overall_progress + progress))
+    done < "$PROGRESS_FILE"
+    
+    if [ $total_topics -gt 0 ]; then
+        overall_progress=$((overall_progress / total_topics))
+    fi
+    
+    echo -e "${WHITE}modules completed: $completed_topics/$total_topics${NC}"
+    echo -e "${WHITE}overall progress: $overall_progress%${NC}"
+    echo ""
+    
+    # show individual progress
+    while IFS='|' read -r topic progress; do
+        local progress_bar=""
+        local filled=$((progress / 10))
+        local empty=$((10 - filled))
+        
+        progress_bar="${GREEN}$(printf '█%.0s' $(seq 1 $filled))${NC}"
+        progress_bar="${progress_bar}${WHITE}$(printf '░%.0s' $(seq 1 $empty))${NC}"
+        
+        echo -e "${WHITE}$topic: $progress_bar $progress%${NC}"
+    done < "$PROGRESS_FILE"
+}
+
+# take quiz
+take_quiz() {
+    local topic="$1"
+    
+    if [ -z "$topic" ]; then
+        echo -e "${RED}error: topic required${NC}"
+        return 1
+    fi
+    
+    echo -e "${MAGENTA}=== quiz: $topic ===${NC}"
+    echo ""
+    
+    local score=0
+    local total=0
+    
+    # get quiz questions for topic
+    while IFS='|' read -r q_topic q_num q_question q_opt1 q_opt2 q_opt3 q_opt4 q_answer; do
+        if [ "$q_topic" = "$topic" ]; then
+            total=$((total + 1))
+            
+            echo -e "${CYAN}Question $q_num: $q_question${NC}"
+            echo "1) $q_opt1"
+            echo "2) $q_opt2"
+            echo "3) $q_opt3"
+            echo "4) $q_opt4"
+            echo ""
+            
+            echo -n -e "${WHITE}Your answer (1-4): ${NC}"
+            read -r user_answer
+            
+            if [ "$user_answer" = "$q_answer" ]; then
+                echo -e "${GREEN}✓ Correct!${NC}"
+                score=$((score + 1))
+            else
+                echo -e "${RED}✗ Incorrect. The answer was $q_answer.${NC}"
+            fi
+            echo ""
+        fi
+    done < "$EDU_DIR/quiz-questions.txt"
+    
+    if [ $total -gt 0 ]; then
+        local percentage=$((score * 100 / total))
+        echo -e "${MAGENTA}=== quiz results ===${NC}"
+        echo -e "${WHITE}score: $score/$total ($percentage%)${NC}"
+        
+        if [ $percentage -ge 80 ]; then
+            echo -e "${GREEN}excellent work!${NC}"
+        elif [ $percentage -ge 60 ]; then
+            echo -e "${YELLOW}good job!${NC}"
+        else
+            echo -e "${RED}keep studying!${NC}"
+        fi
+    else
+        echo -e "${YELLOW}no quiz questions found for topic: $topic${NC}"
+    fi
+}
+
+# daily challenge
+daily_challenge() {
+    echo -e "${MAGENTA}=== daily privacy challenge ===${NC}"
+    echo ""
+    
+    # generate challenge based on date
+    local day_of_year=$(date +%j)
+    local challenges=(
+        "Review and update your browser privacy settings"
+        "Enable two-factor authentication on one account"
+        "Use Tor for all browsing today"
+        "Create a new strong password manager entry"
+        "Review app permissions on your phone"
+        "Clear browser cookies and cache"
+        "Use encrypted messaging for all communications"
+        "Check for data breaches with your email"
+        "Review social media privacy settings"
+        "Use a VPN for all internet activity"
+        "Audit your digital footprint"
+        "Create a disposable email for online forms"
+        "Review location sharing settings"
+        "Use privacy-focused search engine"
+        "Check router security settings"
+        "Review cloud storage privacy settings"
+        "Use encrypted file storage"
+        "Practice safe browsing habits"
+        "Learn about a new privacy tool"
+    )
+    
+    local challenge_index=$((day_of_year % ${#challenges[@]}))
+    local challenge="${challenges[$challenge_index]}"
+    
+    echo -e "${WHITE}today's challenge:${NC}"
+    echo -e "${CYAN}$challenge${NC}"
+    echo ""
+    echo -e "${YELLOW}come back tomorrow for a new challenge!${NC}"
+}
+
+# show privacy resources
+show_resources() {
+    echo -e "${CYAN}[ privacy resources ]${NC}"
+    echo ""
+    
+    echo -e "${WHITE}websites:${NC}"
+    echo "  • privacytools.io - collection of privacy tools"
+    echo "  • eff.org - electronic frontier foundation"
+    echo "  • privacyrights.org - privacy rights information"
+    echo "  • haveibeenpwned.com - breach checking"
+    echo "  • ssd.eff.org - surveillance self-defense"
+    echo ""
+    
+    echo -e "${WHITE}books:${NC}"
+    echo "  • 'The Privacy Engineer's Handbook' - Abhishek Singh"
+    echo "  • 'Data and Goliath' - Bruce Schneier"
+    echo "  • 'The Age of Surveillance Capitalism' - Shoshana Zuboff"
+    echo "  • 'Obfuscation' - Finn Brunton & Helen Nissenbaum"
+    echo ""
+    
+    echo -e "${WHITE}tools:${NC}"
+    echo "  • signal.org - encrypted messaging"
+    echo "  • torproject.org - anonymous browsing"
+    echo "  • protonmail.com - encrypted email"
+    echo "  • cryptomator.org - encrypted cloud storage"
+    echo ""
+    
+    echo -e "${WHITE}milany tools:${NC}"
+    echo "  • milany-privacy-score - privacy assessment"
+    echo "  • milany-crypt - encryption utilities"
+    echo "  • milany-proxy - anonymity tools"
+    echo "  • milany-scan - security scanning"
+}
+
+# show privacy news
+show_news() {
+    echo -e "${CYAN}[ privacy news feed ]${NC}"
+    echo ""
+    
+    # fetch privacy news (simulated for demo)
+    echo -e "${WHITE}latest privacy headlines:${NC}"
+    echo "  • New data protection law passed in EU member state"
+    echo "  • Major tech company fined for privacy violations"
+    echo "  • New surveillance tool discovered in the wild"
+    echo "  • Privacy-focused browser gains market share"
+    echo "  • Government announces new encryption backdoor proposal"
+    echo ""
+    
+    echo -e "${YELLOW}note: this is a demo. real implementation would fetch from privacy news sources${NC}"
+}
+
+# show daily tips
+show_tips() {
+    echo -e "${CYAN}[ daily privacy tips ]${NC}"
+    echo ""
+    
+    local tips=(
+        "Use different passwords for each account"
+        "Enable two-factor authentication everywhere possible"
+        "Review app permissions before installing"
+        "Use HTTPS everywhere (HTTPS Everywhere extension)"
+        "Clear browser data regularly"
+        "Use privacy-focused search engines (DuckDuckGo, Startpage)"
+        "Disable location services when not needed"
+        "Use encrypted messaging apps (Signal, Session)"
+        "Be careful what you share on social media"
+        "Use a VPN on public Wi-Fi"
+        "Regularly review privacy settings"
+        "Use password managers for strong passwords"
+        "Avoid using public USB charging ports"
+        "Cover your webcam when not in use"
+        "Use privacy-focused browsers (Firefox, Brave)"
+        "Be skeptical of phishing attempts"
+        "Keep your software updated"
+        "Use encrypted email when possible"
+    )
+    
+    local day_of_year=$(date +%j)
+    local tip_index=$((day_of_year % ${#tips[@]}))
+    
+    echo -e "${WHITE}today's tip:${NC}"
+    echo -e "${CYAN}${tips[$tip_index]}${NC}"
+}
+
+# main function
+main() {
+    init_edu
+    
+    case "${1:-help}" in
+        learn)
+            learn_topic "$2"
+            ;;
+        list)
+            list_topics
+            ;;
+        progress)
+            show_progress
+            ;;
+        quiz)
+            take_quiz "$2"
+            ;;
+        challenge)
+            daily_challenge
+            ;;
+        resources)
+            show_resources
+            ;;
+        news)
+            show_news
+            ;;
+        tips)
+            show_tips
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# run main function
+main "$@"

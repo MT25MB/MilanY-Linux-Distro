@@ -1,0 +1,502 @@
+#!/bin/bash
+# milanY digital identity manager
+# manage multiple anonymous digital identities
+
+# colors
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+# identity configuration
+ID_DIR="/var/lib/milany-identities"
+ACTIVE_ID_FILE="$ID_DIR/active-identity"
+IDENTITIES_FILE="$ID_DIR/identities.db"
+
+# help function
+show_help() {
+    echo -e "${CYAN}milany-id-manager - digital identity manager${NC}"
+    echo ""
+    echo "usage: milany-id-manager [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  create                create new identity"
+    echo "  list                  list all identities"
+    echo "  switch <name>        switch to identity"
+    echo "  current               show current identity"
+    echo "  edit <name>          edit identity"
+    echo "  delete <name>         delete identity"
+    echo "  export <name>         export identity"
+    echo "  import <file>         import identity"
+    echo "  profile <name>        show identity profile"
+    echo "  rotate <name>         rotate identity keys"
+    echo "  backup                backup all identities"
+    echo "  restore <file>        restore identities"
+    echo ""
+    echo "identity fields:"
+    echo "  name, email, pgp key, vpn config, browser profile"
+    echo "  custom user agents, dns settings, proxy settings"
+    echo ""
+    echo "examples:"
+    echo "  milany-id-manager create"
+    echo "  milany-id-manager switch anonymous"
+    echo "  milany-id-manager profile journalist"
+}
+
+# initialize identity system
+init_id_system() {
+    mkdir -p "$ID_DIR"
+    touch "$IDENTITIES_FILE"
+    touch "$ACTIVE_ID_FILE"
+}
+
+# create new identity
+create_identity() {
+    echo -e "${MAGENTA}=== create new digital identity ===${NC}"
+    echo ""
+    
+    # get identity details
+    echo -e "${WHITE}enter identity details:${NC}"
+    echo -n -e "${CYAN}identity name: ${NC}"
+    read -r id_name
+    
+    if [ -z "$id_name" ]; then
+        echo -e "${RED}error: identity name required${NC}"
+        return 1
+    fi
+    
+    # check if identity already exists
+    if grep -q "^$id_name|" "$IDENTITIES_FILE" 2>/dev/null; then
+        echo -e "${RED}error: identity '$id_name' already exists${NC}"
+        return 1
+    fi
+    
+    echo -n -e "${CYAN}display name: ${NC}"
+    read -r display_name
+    
+    echo -n -e "${CYAN}email address: ${NC}"
+    read -r email
+    
+    echo -n -e "${CYAN}purpose (e.g., journalist, activist, researcher): ${NC}"
+    read -r purpose
+    
+    echo -n -e "${CYAN}notes: ${NC}"
+    read -r notes
+    
+    # create identity directory
+    local id_dir="$ID_DIR/$id_name"
+    mkdir -p "$id_dir"
+    
+    # generate pgp key for identity
+    echo -e "${BLUE}generating pgp key for $id_name...${NC}"
+    gpg --batch --homedir "$id_dir/.gnupg" --gen-key << EOF
+Key-Type: RSA
+Key-Length: 4096
+Subkey-Type: RSA
+Subkey-Length: 4096
+Name-Real: $display_name
+Name-Email: $email
+Expire-Date: 2y
+%no-protection
+EOF
+    
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}failed to generate pgp key${NC}"
+        return 1
+    fi
+    
+    # get key fingerprint
+    local fingerprint=$(gpg --homedir "$id_dir/.gnupg" --list-keys --with-fingerprint "$email" | grep "Key fingerprint" -A 1 | tail -1 | tr -d ' ')
+    
+    # save identity to database
+    echo "$id_name|$display_name|$email|$purpose|$notes|$fingerprint|$(date +%Y-%m-%d)" >> "$IDENTITIES_FILE"
+    
+    # create identity profile
+    cat > "$id_dir/profile.conf" << EOF
+# milanY identity profile
+# identity: $id_name
+
+[identity]
+name = $id_name
+display_name = $display_name
+email = $email
+purpose = $purpose
+notes = $notes
+fingerprint = $fingerprint
+created = $(date +%Y-%m-%d)
+
+[pgp]
+homedir = $id_dir/.gnupg
+key_id = $fingerprint
+
+[browser]
+user_agent = Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36
+proxy = socks5://127.0.0.1:9050
+dns = 127.0.0.1:5300
+
+[vpn]
+config_file = $id_dir/vpn.conf
+enabled = false
+
+[applications]
+email_client = thunderbird
+messaging_client = signal
+browser = firefox
+EOF
+    
+    echo -e "${GREEN}identity '$id_name' created successfully${NC}"
+    echo -e "${CYAN}fingerprint: $fingerprint${NC}"
+    
+    # ask if this should be the active identity
+    echo -n -e "${YELLOW}make this the active identity? [y/N]: ${NC}"
+    read -r make_active
+    if [[ "$make_active" =~ ^[Yy]$ ]]; then
+        switch_identity "$id_name"
+    fi
+}
+
+# list all identities
+list_identities() {
+    echo -e "${CYAN}[ digital identities ]${NC}"
+    echo ""
+    
+    if [ ! -f "$IDENTITIES_FILE" ] || [ ! -s "$IDENTITIES_FILE" ]; then
+        echo -e "${YELLOW}no identities found${NC}"
+        return
+    fi
+    
+    # check current active identity
+    local active_id=""
+    if [ -f "$ACTIVE_ID_FILE" ]; then
+        active_id=$(cat "$ACTIVE_ID_FILE")
+    fi
+    
+    while IFS='|' read -r id_name display_name email purpose notes fingerprint created; do
+        if [ "$id_name" = "$active_id" ]; then
+            echo -e "${GREEN}● $id_name ($display_name) - ACTIVE${NC}"
+        else
+            echo -e "${WHITE}○ $id_name ($display_name)${NC}"
+        fi
+        
+        echo -e "  ${CYAN}email: $email${NC}"
+        echo -e "  ${CYAN}purpose: $purpose${NC}"
+        echo -e "  ${CYAN}fingerprint: ${fingerprint:0:16}...${NC}"
+        echo ""
+    done < "$IDENTITIES_FILE"
+}
+
+# switch to identity
+switch_identity() {
+    local id_name="$1"
+    
+    if [ -z "$id_name" ]; then
+        echo -e "${RED}error: identity name required${NC}"
+        return 1
+    fi
+    
+    # check if identity exists
+    if ! grep -q "^$id_name|" "$IDENTITIES_FILE" 2>/dev/null; then
+        echo -e "${RED}error: identity '$id_name' not found${NC}"
+        return 1
+    fi
+    
+    local id_dir="$ID_DIR/$id_name"
+    if [ ! -d "$id_dir" ]; then
+        echo -e "${RED}error: identity directory not found${NC}"
+        return 1
+    fi
+    
+    # set as active identity
+    echo "$id_name" > "$ACTIVE_ID_FILE"
+    
+    # configure system for identity
+    echo -e "${BLUE}switching to identity: $id_name${NC}"
+    
+    # configure gpg
+    export GNUPGHOME="$id_dir/.gnupg"
+    
+    # configure browser profile (if firefox)
+    local firefox_profile="$id_dir/firefox-profile"
+    if [ ! -d "$firefox_profile" ]; then
+        mkdir -p "$firefox_profile"
+    fi
+    
+    # set environment variables
+    export MILANY_IDENTITY="$id_name"
+    export MILANY_ID_DIR="$id_dir"
+    
+    echo -e "${GREEN}switched to identity: $id_name${NC}"
+    echo -e "${CYAN}environment configured for this identity${NC}"
+    echo -e "${YELLOW}restart applications to apply changes${NC}"
+}
+
+# show current identity
+show_current() {
+    if [ ! -f "$ACTIVE_ID_FILE" ]; then
+        echo -e "${YELLOW}no active identity set${NC}"
+        return
+    fi
+    
+    local active_id=$(cat "$ACTIVE_ID_FILE")
+    local id_dir="$ID_DIR/$active_id"
+    
+    if [ ! -d "$id_dir" ]; then
+        echo -e "${RED}error: active identity directory not found${NC}"
+        return
+    fi
+    
+    echo -e "${MAGENTA}=== current identity: $active_id ===${NC}"
+    echo ""
+    
+    if [ -f "$id_dir/profile.conf" ]; then
+        echo -e "${CYAN}[ profile information ]${NC}"
+        grep -v "^#" "$id_dir/profile.conf" | grep -v "^$" | sed 's/^/  /'
+    fi
+}
+
+# edit identity
+edit_identity() {
+    local id_name="$1"
+    
+    if [ -z "$id_name" ]; then
+        echo -e "${RED}error: identity name required${NC}"
+        return 1
+    fi
+    
+    local id_dir="$ID_DIR/$id_name"
+    if [ ! -d "$id_dir" ]; then
+        echo -e "${RED}error: identity '$id_name' not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}editing identity: $id_name${NC}"
+    
+    if [ -f "$id_dir/profile.conf" ]; then
+        ${EDITOR:-vim} "$id_dir/profile.conf"
+        echo -e "${GREEN}identity profile updated${NC}"
+    else
+        echo -e "${RED}error: identity profile not found${NC}"
+        return 1
+    fi
+}
+
+# delete identity
+delete_identity() {
+    local id_name="$1"
+    
+    if [ -z "$id_name" ]; then
+        echo -e "${RED}error: identity name required${NC}"
+        return 1
+    fi
+    
+    # check if identity exists
+    if ! grep -q "^$id_name|" "$IDENTITIES_FILE" 2>/dev/null; then
+        echo -e "${RED}error: identity '$id_name' not found${NC}"
+        return 1
+    fi
+    
+    # confirm deletion
+    echo -n -e "${RED}delete identity '$id_name'? this cannot be undone [y/N]: ${NC}"
+    read -r confirm
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}deletion cancelled${NC}"
+        return
+    fi
+    
+    # remove identity directory
+    local id_dir="$ID_DIR/$id_name"
+    if [ -d "$id_dir" ]; then
+        rm -rf "$id_dir"
+    fi
+    
+    # remove from database
+    local temp_file=$(mktemp)
+    grep -v "^$id_name|" "$IDENTITIES_FILE" > "$temp_file" 2>/dev/null
+    mv "$temp_file" "$IDENTITIES_FILE"
+    
+    # clear active identity if this was the active one
+    if [ -f "$ACTIVE_ID_FILE" ] && [ "$(cat "$ACTIVE_ID_FILE" 2>/dev/null)" = "$id_name" ]; then
+        rm "$ACTIVE_ID_FILE"
+        echo -e "${YELLOW}active identity cleared${NC}"
+    fi
+    
+    echo -e "${GREEN}identity '$id_name' deleted${NC}"
+}
+
+# show identity profile
+show_profile() {
+    local id_name="$1"
+    
+    if [ -z "$id_name" ]; then
+        echo -e "${RED}error: identity name required${NC}"
+        return 1
+    fi
+    
+    local id_dir="$ID_DIR/$id_name"
+    if [ ! -d "$id_dir" ]; then
+        echo -e "${RED}error: identity '$id_name' not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${MAGENTA}=== identity profile: $id_name ===${NC}"
+    echo ""
+    
+    if [ -f "$id_dir/profile.conf" ]; then
+        cat "$id_dir/profile.conf"
+    else
+        echo -e "${YELLOW}no profile file found${NC}"
+    fi
+}
+
+# rotate identity keys
+rotate_keys() {
+    local id_name="$1"
+    
+    if [ -z "$id_name" ]; then
+        echo -e "${RED}error: identity name required${NC}"
+        return 1
+    fi
+    
+    local id_dir="$ID_DIR/$id_name"
+    if [ ! -d "$id_dir" ]; then
+        echo -e "${RED}error: identity '$id_name' not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}rotating keys for identity: $id_name${NC}"
+    
+    # backup old keys
+    local backup_dir="$id_dir/keys-backup-$(date +%Y%m%d-%H%M%S)"
+    mkdir -p "$backup_dir"
+    cp -r "$id_dir/.gnupg"/* "$backup_dir/" 2>/dev/null
+    
+    # get identity info
+    local display_name=$(grep "^$id_name|" "$IDENTITIES_FILE" | cut -d'|' -f2)
+    local email=$(grep "^$id_name|" "$IDENTITIES_FILE" | cut -d'|' -f3)
+    
+    # generate new key
+    gpg --homedir "$id_dir/.gnupg" --batch --gen-key << EOF
+Key-Type: RSA
+Key-Length: 4096
+Subkey-Type: RSA
+Subkey-Length: 4096
+Name-Real: $display_name
+Name-Email: $email
+Expire-Date: 2y
+%no-protection
+EOF
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}keys rotated successfully${NC}"
+        echo -e "${CYAN}old keys backed up to: $backup_dir${NC}"
+    else
+        echo -e "${RED}failed to rotate keys${NC}"
+        return 1
+    fi
+}
+
+# backup all identities
+backup_identities() {
+    local backup_file="$ID_DIR/backup-$(date +%Y%m%d-%H%M%S).tar.gz"
+    
+    echo -e "${BLUE}backing up all identities...${NC}"
+    
+    tar -czf "$backup_file" -C "$ID_DIR" .
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}backup created: $backup_file${NC}"
+    else
+        echo -e "${RED}failed to create backup${NC}"
+        return 1
+    fi
+}
+
+# restore identities
+restore_identities() {
+    local backup_file="$1"
+    
+    if [ -z "$backup_file" ]; then
+        echo -e "${RED}error: backup file required${NC}"
+        return 1
+    fi
+    
+    if [ ! -f "$backup_file" ]; then
+        echo -e "${RED}error: backup file not found${NC}"
+        return 1
+    fi
+    
+    echo -e "${BLUE}restoring identities from backup...${NC}"
+    echo -e "${YELLOW}warning: this will overwrite existing identities${NC}"
+    
+    echo -n -e "${RED}continue? [y/N]: ${NC}"
+    read -r confirm
+    
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}restore cancelled${NC}"
+        return
+    fi
+    
+    # extract backup
+    tar -xzf "$backup_file" -C "$ID_DIR"
+    
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}identities restored successfully${NC}"
+    else
+        echo -e "${RED}failed to restore identities${NC}"
+        return 1
+    fi
+}
+
+# main function
+main() {
+    init_id_system
+    
+    case "${1:-help}" in
+        create)
+            create_identity
+            ;;
+        list)
+            list_identities
+            ;;
+        switch)
+            switch_identity "$2"
+            ;;
+        current)
+            show_current
+            ;;
+        edit)
+            edit_identity "$2"
+            ;;
+        delete)
+            delete_identity "$2"
+            ;;
+        profile)
+            show_profile "$2"
+            ;;
+        rotate)
+            rotate_keys "$2"
+            ;;
+        backup)
+            backup_identities
+            ;;
+        restore)
+            restore_identities "$2"
+            ;;
+        -h|--help)
+            show_help
+            ;;
+        *)
+            echo -e "${RED}error: unknown command${NC}"
+            show_help
+            exit 1
+            ;;
+    esac
+}
+
+# run main function
+main "$@"
