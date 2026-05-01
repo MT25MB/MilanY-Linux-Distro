@@ -1,0 +1,396 @@
+#!/bin/bash
+# milanY WiFi security toolkit
+# WiFi reconnaissance and deauthentication detection
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+LOG_FILE="/var/log/milany-wifi-jammer.log"
+MONITOR_LOG="/var/log/milany-wifi-monitor.log"
+
+show_help() {
+    echo -e "${CYAN}milanY WiFi security toolkit${NC}"
+    echo ""
+    echo "usage: milany-wifi-jammer [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  scan                      scan for WiFi networks"
+    echo "  monitor                   monitor WiFi traffic"
+    echo "  detect-deauth             detect deauthentication attacks"
+    echo "  deauth-detect             show deauth detection status"
+    echo "  channel-hop               monitor all channels"
+    echo "  clients                   show connected clients"
+    echo "  signal <bssid>           check signal strength"
+    echo "  rogue-detect              detect rogue access points"
+    echo "  jam-test                  test jamming detection (educational)"
+    echo ""
+    echo "options:"
+    echo "  -i, --interface <if>     wireless interface"
+    echo "  -c, --channel <n>        channel number"
+    echo "  -d, --duration <sec>     duration in seconds"
+    echo "  -v, --verbose            verbose output"
+    echo "  -h, --help               show this help"
+    echo ""
+    echo "examples:"
+    echo "  milany-wifi-jammer scan"
+    echo "  milany-wifi-jammer detect-deauth -i wlan0mon"
+    echo "  milany-wifi-jammer monitor -i wlan0"
+}
+
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
+}
+
+check_deps() {
+    local missing=()
+
+    if ! command -v iwconfig >/dev/null 2>&1; then
+        missing+=("wireless-tools")
+    fi
+
+    if ! command -v airmon-ng >/dev/null 2>&1; then
+        missing+=("aircrack-ng")
+    fi
+
+    if ! command -v airodump-ng >/dev/null 2>&1; then
+        missing+=("aircrack-ng")
+    fi
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${YELLOW}note: some tools missing: ${missing[*]}${NC}"
+    fi
+}
+
+get_interface() {
+    local iface="$1"
+
+    if [ -n "$iface" ]; then
+        echo "$iface"
+    else
+        iwconfig 2>/dev/null | grep "wlan" | head -1 | awk '{print $1}' || echo "wlan0"
+    fi
+}
+
+enable_monitor() {
+    local interface=$(get_interface "$1")
+
+    echo -e "${BLUE}enabling monitor mode on $interface${NC}"
+
+    if ip link show "$interface" | grep -q "mon"; then
+        echo -e "${YELLOW}already in monitor mode${NC}"
+        return 0
+    fi
+
+    if command -v airmon-ng >/dev/null 2>&1; then
+        airmon-ng start "$interface" 2>/dev/null
+    else
+        ip link set "$interface" down 2>/dev/null
+        iw dev "$interface" interface add "${interface}mon" type monitor 2>/dev/null
+        ip link set "${interface}mon" up 2>/dev/null
+    fi
+
+    echo -e "${GREEN}✓ monitor mode enabled${NC}"
+}
+
+scan_networks() {
+    local interface=$(get_interface "$1")
+    local duration="${2:-10}"
+
+    echo -e "${BLUE}scanning for WiFi networks on $interface${NC}"
+    echo -e "${CYAN}duration: $duration seconds${NC}"
+    echo ""
+
+    if ! command -v airodump-ng >/dev/null 2>&1; then
+        echo -e "${RED}airodump-ng not available${NC}"
+        echo "install with: pacman -S aircrack-ng"
+        return 1
+    fi
+
+    enable_monitor "$interface"
+
+    local mon_iface="${interface}mon"
+    if [ ! -d "/sys/class/net/$mon_iface" ]; then
+        mon_iface="$interface"
+    fi
+
+    timeout "$duration" airodump-ng "$mon_iface" --encrypt wpa2,wpa,wep 2>/dev/null
+
+    log_message "INFO" "WiFi scan completed on $mon_iface"
+}
+
+monitor_traffic() {
+    local interface=$(get_interface "$1")
+    local channel="${2:-1}"
+    local duration="${3:-30}"
+
+    echo -e "${BLUE}monitoring WiFi traffic on channel $channel${NC}"
+    echo -e "${CYAN}duration: $duration seconds${NC}"
+    echo ""
+
+    enable_monitor "$interface"
+
+    local mon_iface="${interface}mon"
+    if [ ! -d "/sys/class/net/$mon_iface" ]; then
+        mon_iface="$interface"
+    fi
+
+    iw dev "$mon_iface" set channel "$channel" 2>/dev/null
+
+    timeout "$duration" airodump-ng "$mon_iface" --channel "$channel" 2>/dev/null
+}
+
+detect_deauth() {
+    local interface=$(get_interface "$1")
+    local duration="${2:-60}"
+
+    echo -e "${BLUE}detecting deauthentication attacks${NC}"
+    echo -e "${YELLOW}⚠ monitoring for 60 seconds${NC}"
+    echo ""
+    echo -e "${RED}This tool detects deauth frames, not performs them.${NC}"
+    echo ""
+
+    enable_monitor "$interface"
+
+    local mon_iface="${interface}mon"
+    if [ ! -d "/sys/class/net/$mon_iface" ]; then
+        mon_iface="$interface"
+    fi
+
+    echo -e "${CYAN}[ deauth detection - press Ctrl+C to stop ]${NC}"
+    echo ""
+
+    timeout "$duration" airodump-ng "$mon_iface" --manufacturer 2>/dev/null | while read line; do
+        if echo "$line" | grep -q "deauth"; then
+            echo -e "${RED}⚠ deauth frame detected${NC}"
+        fi
+
+        if echo "$line" | grep -q "disassoc"; then
+            echo -e "${YELLOW}⚠ disassociation frame detected${NC}"
+        fi
+    done
+
+    echo ""
+    echo -e "${GREEN}✓ detection complete${NC}"
+}
+
+show_deauth_status() {
+    echo -e "${CYAN}[ Deauthentication Detection Status ]${NC}"
+    echo ""
+
+    echo -e "${WHITE}Monitored Networks:${NC}"
+
+    if [ -f "$MONITOR_LOG" ]; then
+        tail -20 "$MONITOR_LOG"
+    else
+        echo "  (no monitoring data yet)"
+    fi
+
+    echo ""
+    echo -e "${WHITE}Detection Methods:${NC}"
+    echo "  1. Monitor for excessive deauth frames"
+    echo "  2. Watch for unexpected disconnections"
+    echo "  3. Check for rogue access points"
+    echo "  4. Analyze channel hopping patterns"
+
+    echo ""
+    echo -e "${CYAN}To detect attacks, run:${NC}"
+    echo "  milany-wifi-jammer detect-deauth -i wlan0mon"
+}
+
+channel_hopping() {
+    local interface=$(get_interface "$1")
+    local duration="${2:-60}"
+
+    echo -e "${BLUE}channel hopping monitor${NC}"
+    echo -e "${CYAN}scanning all channels for $duration seconds${NC}"
+    echo ""
+
+    enable_monitor "$interface"
+
+    local mon_iface="${interface}mon"
+    if [ ! -d "/sys/class/net/$mon_iface" ]; then
+        mon_iface="$interface"
+    fi
+
+    python3 << EOF &
+import time
+import subprocess
+import os
+
+channels = [1, 6, 11, 2, 3, 4, 5, 7, 8, 9, 10, 12, 13]
+start_time = time.time()
+duration = $duration
+
+while time.time() - start_time < duration:
+    for ch in channels:
+        try:
+            subprocess.run(['iw', 'dev', '$mon_iface', 'set', 'channel', str(ch)],
+                          timeout=1, capture_output=True)
+            print(f"Channel {ch}", end='\r')
+            time.sleep(1)
+        except:
+            pass
+EOF
+
+    timeout "$duration" airodump-ng "$mon_iface" 2>/dev/null
+}
+
+show_clients() {
+    local interface=$(get_interface "$1")
+    local bssid="$2"
+
+    echo -e "${BLUE}showing connected clients${NC}"
+
+    if [ -z "$bssid" ]; then
+        echo -e "${YELLOW}target BSSID required${NC}"
+        return 1
+    fi
+
+    enable_monitor "$interface"
+
+    local mon_iface="${interface}mon"
+    if [ ! -d "/sys/class/net/$mon_iface" ]; then
+        mon_iface="$interface"
+    fi
+
+    echo -e "${CYAN}monitoring clients on BSSID: $bssid${NC}"
+
+    timeout 30 airodump-ng "$mon_iface" --bssid "$bssid" --write /tmp/client-scan 2>/dev/null
+}
+
+check_signal() {
+    local interface="$1"
+    local bssid="$2"
+
+    if [ -z "$bssid" ]; then
+        echo -e "${RED}error: BSSID required${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}checking signal for $bssid${NC}"
+
+    iw dev "$interface" link 2>/dev/null | grep -i "signal\|tx\|rx" || echo "Not connected"
+}
+
+rogue_detection() {
+    local interface=$(get_interface "$1")
+
+    echo -e "${BLUE}detecting rogue access points${NC}"
+    echo ""
+
+    enable_monitor "$interface"
+
+    local mon_iface="${interface}mon"
+    if [ ! -d "/sys/class/net/$mon_iface" ]; then
+        mon_iface="$interface"
+    fi
+
+    echo -e "${CYAN}[ scanning for duplicate BSSIDs ]${NC}"
+    timeout 20 airodump-ng "$mon_iface" --wps 2>/dev/null | grep -A100 "BSSID"
+
+    echo ""
+    echo -e "${CYAN}[ checking for Evil Twin ]${NC}"
+    echo "This checks for:"
+    echo "  - Same SSID, different BSSID"
+    echo "  - Different encryption methods"
+    echo "  - Unusually strong signals"
+
+    timeout 30 airodump-ng "$mon_iface" -w /tmp/rogue-scan 2>/dev/null &
+    sleep 30
+    pkill airodump-ng
+
+    echo ""
+    echo -e "${CYAN}[ known access points ]${NC}"
+    echo "To detect rogues, compare against known legitimate APs"
+
+    log_message "INFO" "rogue AP detection on $mon_iface"
+}
+
+jamming_test() {
+    local interface=$(get_interface "$1")
+
+    echo -e "${BLUE}jamming detection test${NC}"
+    echo ""
+
+    cat << 'EOF'
+This tool demonstrates how to DETECT WiFi jamming, not perform it.
+
+DETECTION METHODS:
+1. Monitor packet rates - sudden drops indicate jamming
+2. Check for deauth storms - attacker keeping clients off
+3. Watch beacon frames - jammers may disrupt these
+4. Signal strength anomalies - intentional interference
+
+PROTECTION:
+- Use 5GHz when available (less congested)
+- Enable 802.11w management frame protection
+- Monitor for unusual disconnections
+- Use WPA3-Personal if available
+
+EOF
+
+    enable_monitor "$interface"
+
+    local mon_iface="${interface}mon"
+    if [ ! -d "/sys/class/net/$mon_iface" ]; then
+        mon_iface="$interface"
+    fi
+
+    echo -e "${BLUE}monitoring for interference...${NC}"
+    timeout 30 airodump-ng "$mon_iface" 2>/dev/null | head -30
+
+    echo ""
+    echo -e "${GREEN}✓ monitoring complete${NC}"
+    echo -e "${CYAN}To properly detect jamming, compare signal levels over time${NC}"
+    echo -e "${CYAN}and look for sudden drops or abnormal patterns${NC}"
+}
+
+mkdir -p "$(dirname "$LOG_FILE")"
+mkdir -p "$(dirname "$MONITOR_LOG")"
+touch "$LOG_FILE"
+touch "$MONITOR_LOG"
+
+check_deps
+
+case "${1:-help}" in
+    scan)
+        scan_networks "$2" "$3"
+        ;;
+    monitor)
+        monitor_traffic "$2" "$3" "$4"
+        ;;
+    detect-deauth)
+        detect_deauth "$2" "$3"
+        ;;
+    deauth-detect)
+        show_deauth_status
+        ;;
+    channel-hop)
+        channel_hopping "$2" "$3"
+        ;;
+    clients)
+        show_clients "$2" "$3"
+        ;;
+    signal)
+        check_signal "$2" "$3"
+        ;;
+    rogue-detect)
+        rogue_detection "$2"
+        ;;
+    jam-test)
+        jamming_test "$2"
+        ;;
+    -h|--help)
+        show_help
+        ;;
+    *)
+        show_help
+        exit 1
+        ;;
+esac

@@ -1,0 +1,424 @@
+#!/bin/bash
+# milanY packet injection toolkit
+# network security testing and MITM simulation
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+LOG_FILE="/var/log/milany-packet-injector.log"
+ARP_TABLE="/tmp/milany_arp_cache"
+
+show_help() {
+    echo -e "${CYAN}milanY packet injection toolkit${NC}"
+    echo ""
+    echo "usage: milany-packet-injector [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  arp-scan                    scan for ARP spoofing"
+    echo "  arp-defend                  enable ARP spoofing protection"
+    echo "  craft <type>                craft custom packet"
+    echo "  mitm <target> <gateway>    MITM simulation (educational)"
+    echo "  inject <target> <data>     inject data to target"
+    echo "  sniff                       passive packet sniffing"
+    echo "  decode <file>              decode captured packets"
+    echo "  mac-flood                   MAC address flooding test"
+    echo "  port-scan                   fast port scanning"
+    echo ""
+    echo "options:"
+    echo "  -i, --interface <if>       network interface"
+    echo "  -t, --target <ip>          target IP address"
+    echo "  -g, --gateway <ip>         gateway IP"
+    echo "  -c, --count <n>            packet count"
+    echo "  -p, --port <n>             port number"
+    echo "  -h, --help                 show this help"
+    echo ""
+    echo "examples:"
+    echo "  milany-packet-injector arp-scan -i eth0"
+    echo "  milany-packet-injector arp-defend -i eth0"
+    echo "  milany-packet-injector mitm 192.168.1.100 192.168.1.1"
+}
+
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
+}
+
+check_deps() {
+    local missing=()
+    command -v nmap >/dev/null 2>&1 || missing+=("nmap")
+    command -v tcpdump >/dev/null 2>&1 || missing+=("tcpdump")
+    command -v scapy >/dev/null 2>&1 || command -v python3 >/dev/null 2>&1 || missing+=("python3")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${RED}warning: some tools may be missing${NC}"
+    fi
+}
+
+get_interface() {
+    local iface="$1"
+    if [ -n "$iface" ]; then
+        echo "$iface"
+    else
+        ip route | grep default | head -1 | awk '{print $5}' || echo "eth0"
+    fi
+}
+
+arp_spoof_detect() {
+    local interface=$(get_interface "$1")
+
+    echo -e "${BLUE}scanning for ARP spoofing on $interface...${NC}"
+    echo ""
+
+    local gateway=$(ip route | grep default | head -1 | awk '{print $3}')
+    local gateway_mac=$(arp -n "$gateway" 2>/dev/null | awk '/[0-9:]/{print $3}')
+
+    echo -e "${CYAN}[ gateway: $gateway ($gateway_mac) ]${NC}"
+    echo ""
+
+    local arp_data=$(ip neigh show | grep -v FAILED | grep -v INCOMPLETE)
+
+    echo -e "${WHITE}checking for duplicate MAC addresses...${NC}"
+
+    local mac_count=$(echo "$arp_data" | awk '{print $3}' | sort | uniq -c | sort -rn)
+
+    if echo "$mac_count" | awk '{if($1>1) exit 1}'; then
+        echo -e "${GREEN}✓ no duplicate MAC addresses detected${NC}"
+    else
+        echo -e "${RED}⚠ potential ARP spoofing detected${NC}"
+        echo "$mac_count" | awk '{if($1>1) print "  " $2 " appears " $1 " times"}'
+    fi
+
+    echo ""
+
+    echo -e "${WHITE}checking for ARP table inconsistencies...${NC}"
+
+    local suspicious=0
+
+    while IFS= read -r line; do
+        local ip=$(echo "$line" | awk '{print $1}')
+        local mac=$(echo "$line" | awk '{print $3}')
+        local state=$(echo "$line" | awk '{print $6}')
+
+        if [ "$state" = "REACHABLE" ] || [ "$state" = "STALE" ]; then
+            local vendor=$(echo "$mac" | cut -c1-8)
+            if [ "$vendor" = "00:00:00" ] || [ "$vendor" = "ff:ff:ff" ]; then
+                echo -e "${YELLOW}⚠ suspicious MAC for $ip: $mac${NC}"
+                suspicious=$((suspicious + 1))
+            fi
+        fi
+    done <<< "$arp_data"
+
+    if [ $suspicious -eq 0 ]; then
+        echo -e "${GREEN}✓ no suspicious ARP entries${NC}"
+    fi
+
+    echo ""
+
+    echo -e "${CYAN}[ ARP table ]${NC}"
+    ip neigh show | grep -v FAILED | awk '{printf "%-18s %-20s %s\n", $1, $3, $5}'
+
+    log_message "INFO" "ARP spoofing scan completed on $interface"
+}
+
+arp_defend() {
+    local interface=$(get_interface "$1")
+
+    echo -e "${BLUE}enabling ARP spoofing protection on $interface${NC}"
+
+    local static_arp=$(cat << 'EOF'
+#!/bin/bash
+# milanY ARP protection script
+GATEWAY=$(ip route | grep default | head -1 | awk '{print $3}')
+GATEWAY_MAC=$(arp -n "$GATEWAY" 2>/dev/null | awk '/[0-9:]/{print $3}')
+
+if [ -n "$GATEWAY_MAC" ]; then
+    ip neigh del $GATEWAY dev eth0 2>/dev/null
+    ip neigh add $GATEWAY lladdr $GATEWAY_MAC nud permanent dev eth0 2>/dev/null
+    echo "Static ARP entry set for gateway"
+fi
+
+while true; do
+    CURRENT_MAC=$(arp -n $GATEWAY 2>/dev/null | awk '/[0-9:]/{print $3}')
+    if [ "$CURRENT_MAC" != "$GATEWAY_MAC" ]; then
+        logger "ARP SPOOF DETECTED: $GATEWAY changed from $GATEWAY_MAC to $CURRENT_MAC"
+        ip neigh replace $GATEWAY lladdr $GATEWAY_MAC nud permanent dev eth0 2>/dev/null
+    fi
+    sleep 10
+done
+EOF
+)
+
+    echo "$static_arp" > /usr/local/bin/milany-arp-protect
+    chmod +x /usr/local/bin/milany-arp-protect
+
+    (nohup /usr/local/bin/milany-arp-protect >/dev/null 2>&1 &)
+
+    echo -e "${GREEN}✓ ARP protection enabled${NC}"
+    echo -e "${CYAN}use 'pkill milany-arp-protect' to disable${NC}"
+
+    log_message "INFO" "ARP protection enabled on $interface"
+}
+
+craft_packet() {
+    local type="$1"
+    local target="$2"
+    local interface=$(get_interface "")
+
+    echo -e "${BLUE}crafting $type packet for $target${NC}"
+
+    case "$type" in
+        icmp)
+            echo -e "${CYAN}ICMP echo request packet:${NC}"
+            echo "destination: $target"
+            echo "type: echo-request (8)"
+            echo "code: 0"
+            echo ""
+            echo "# Craft command (requires scapy or similar):"
+            echo "python3 -c \"from scapy.all import *; send(IP(dst='$target')/ICMP())\""
+            ;;
+        tcp)
+            local port="${3:-80}"
+            echo -e "${CYAN}TCP SYN packet:${NC}"
+            echo "destination: $target:$port"
+            echo "flags: SYN"
+            echo ""
+            echo "# Craft command:"
+            echo "python3 -c \"from scapy.all import *; send(IP(dst='$target')/TCP(dport=$port, flags='S'))\""
+            ;;
+        udp)
+            local port="${3:-53}"
+            echo -e "${CYAN}UDP packet:${NC}"
+            echo "destination: $target:$port"
+            echo ""
+            echo "# Craft command:"
+            echo "python3 -c \"from scapy.all import *; send(IP(dst='$target')/UDP(dport=$port))\""
+            ;;
+        arp)
+            local gateway="${3:-192.168.1.1}"
+            echo -e "${CYAN}ARP packet:${NC}"
+            echo "operation: request"
+            echo "target: $target"
+            echo "source IP: $gateway"
+            echo ""
+            echo "# Craft command:"
+            echo "python3 -c \"from scapy.all import *; send(ARP(op=1, pdst='$target', psrc='$gateway'))\""
+            ;;
+        *)
+            echo -e "${RED}unknown packet type: $type${NC}"
+            echo "supported: icmp, tcp, udp, arp"
+            ;;
+    esac
+}
+
+mitm_simulation() {
+    local target="$1"
+    local gateway="$2"
+    local interface=$(get_interface "")
+
+    if [ -z "$target" ] || [ -z "$gateway" ]; then
+        echo -e "${RED}error: target and gateway required${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}⚠ MITM SIMULATION MODE - EDUCATIONAL USE ONLY${NC}"
+    echo ""
+    echo -e "${RED}This tool is for authorized security testing only.${NC}"
+    echo -e "${RED}Unauthorized interception is illegal.${NC}"
+    echo ""
+
+    local target_mac=$(arp -n "$target" 2>/dev/null | awk '/[0-9:]/{print $3}')
+    local gateway_mac=$(arp -n "$gateway" 2>/dev/null | awk '/[0-9:]/{print $3}')
+
+    echo -e "${CYAN}[ target: $target ($target_mac) ]${NC}"
+    echo -e "${CYAN}[ gateway: $gateway ($gateway_mac) ]${NC}"
+    echo ""
+
+    echo -e "${BLUE}simulating ARP poisoning attack${NC}"
+    echo ""
+
+    cat << 'EOF'
+For authorized testing, use these commands:
+
+# Enable IP forwarding:
+echo 1 > /proc/sys/net/ipv4/ip_forward
+
+# Run ARP spoofing:
+arpspoof -i eth0 -t <target> <gateway>
+
+# Or with bettercap:
+bettercap -X -T <target> --arp-replay
+
+# To stop:
+echo 0 > /proc/sys/net/ipv4/ip_forward
+
+This demonstration shows how easily ARP poisoning can be performed.
+EOF
+
+    log_message "WARN" "MITM simulation requested: target=$target gateway=$gateway"
+}
+
+inject_data() {
+    local target="$1"
+    local data="$2"
+    local interface=$(get_interface "")
+
+    if [ -z "$target" ] || [ -z "$data" ]; then
+        echo -e "${RED}error: target and data required${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}injecting data to $target${NC}"
+
+    echo "# Python injection script:" > /tmp/milany_inject.py
+    cat >> /tmp/milany_inject.py << EOF
+from scapy.all import *
+
+packet = IP(dst="$target")/TCP(dport=80)/Raw(load="$data")
+send(packet)
+print(f"Packet sent to $target")
+EOF
+
+    echo -e "${CYAN}injection script created: /tmp/milany_inject.py${NC}"
+    echo -e "${YELLOW}run with: python3 /tmp/milany_inject.py (requires scapy)${NC}"
+
+    log_message "INFO" "Data injection prepared for $target"
+}
+
+passive_sniff() {
+    local interface=$(get_interface "$1")
+    local count="${2:-100}"
+
+    echo -e "${BLUE}starting passive packet capture on $interface${NC}"
+    echo -e "${CYAN}capturing $count packets (Ctrl+C to stop)${NC}"
+    echo ""
+
+    tcpdump -i "$interface" -n -c "$count" -l | while read line; do
+        if echo "$line" | grep -q "TCP"; then
+            echo -e "${GREEN}$line${NC}"
+        elif echo "$line" | grep -q "UDP"; then
+            echo -e "${BLUE}$line${NC}"
+        elif echo "$line" | grep -q "ARP"; then
+            echo -e "${YELLOW}$line${NC}"
+        else
+            echo -e "${WHITE}$line${NC}"
+        fi
+    done
+}
+
+decode_packets() {
+    local file="$1"
+
+    if [ -z "$file" ]; then
+        echo -e "${RED}error: capture file required${NC}"
+        return 1
+    fi
+
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}error: file not found: $file${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}analyzing capture: $file${NC}"
+    echo ""
+
+    echo -e "${CYAN}[ packet summary ]${NC}"
+    tcpdump -r "$file" -nn 2>/dev/null | head -20
+
+    echo ""
+    echo -e "${CYAN}[ protocol distribution ]${NC}"
+    tcpdump -r "$file" -q 2>/dev/null | cut -d' ' -f1 | sort | uniq -c | sort -rn
+
+    echo ""
+    echo -e "${CYAN}[ conversations ]${NC}"
+    tcpdump -r "$file" -nn -q 2>/dev/null | tail -20
+}
+
+mac_flood() {
+    local interface=$(get_interface "$1")
+    local count="${2:-10000}"
+
+    echo -e "${BLUE}MAC flooding test on $interface${NC}"
+    echo -e "${YELLOW}sending $count random MAC addresses${NC}"
+    echo ""
+
+    local macs=()
+    for i in $(seq 1 50); do
+        macs+=("$(printf '00:11:22:33:44:%02x' $i)")
+    done
+
+    echo "This test sends many random MAC addresses to test switch performance."
+
+    if command -v macof >/dev/null 2>&1; then
+        echo "Running macof..."
+        macof -i "$interface" -n "$count" 2>/dev/null &
+    else
+        echo "# Alternative (python):"
+        echo "from scapy.all import *"
+        echo "for i in range($count):"
+        echo "    send(Ether(src=RandMAC())/Dot1Q(vlan=RandShort()))"
+    fi
+
+    echo -e "${GREEN}flood test complete${NC}"
+    log_message "INFO" "MAC flood test on $interface"
+}
+
+port_scan() {
+    local target="$1"
+    local interface=$(get_interface "")
+
+    if [ -z "$target" ]; then
+        echo -e "${RED}error: target required${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}scanning common ports on $target${NC}"
+    echo ""
+
+    nmap -sS -T4 -F "$target" 2>/dev/null
+}
+
+mkdir -p "$(dirname "$LOG_FILE")"
+touch "$LOG_FILE"
+check_deps
+
+case "${1:-help}" in
+    arp-scan)
+        arp_spoof_detect "$2"
+        ;;
+    arp-defend)
+        arp_defend "$2"
+        ;;
+    craft)
+        craft_packet "$2" "$3" "$4"
+        ;;
+    mitm)
+        mitm_simulation "$2" "$3"
+        ;;
+    inject)
+        inject_data "$2" "$3"
+        ;;
+    sniff)
+        passive_sniff "$2" "$3"
+        ;;
+    decode)
+        decode_packets "$2"
+        ;;
+    mac-flood)
+        mac_flood "$2" "$3"
+        ;;
+    port-scan)
+        port_scan "$2"
+        ;;
+    -h|--help)
+        show_help
+        ;;
+    *)
+        show_help
+        exit 1
+        ;;
+esac

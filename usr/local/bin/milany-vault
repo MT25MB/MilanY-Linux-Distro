@@ -1,0 +1,474 @@
+#!/bin/bash
+# milanY encrypted vault manager
+# LUKS encrypted container management
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+VAULT_DIR="/var/lib/milany-vault"
+CONFIG_DIR="/etc/milany/vaults"
+MOUNT_BASE="/mnt/milany-vault"
+
+show_help() {
+    echo -e "${CYAN}milanY encrypted vault manager${NC}"
+    echo ""
+    echo "usage: milany-vault [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  create <name>              create new encrypted vault"
+    echo "  open <name>                open and mount vault"
+    echo "  close <name>              close and unmount vault"
+    echo "  list                       list all vaults"
+    echo "  status                     show open vaults"
+    echo "  delete <name>              delete vault (must be closed)"
+    echo "  resize <name> <size>       resize vault"
+    echo "  addkey <name>              add additional key"
+    echo "  rmkey <name> <slot>        remove key slot"
+    echo "  info <name>                show vault information"
+    echo "  clipboard <name>           secure clipboard operations"
+    echo ""
+    echo "options:"
+    echo "  -s, --size <size>         vault size (e.g., 1G, 500M)"
+    echo "  -p, --path <path>         custom container path"
+    echo "  -c, --cipher <cipher>     encryption cipher (default: aes-xts-plain64)"
+    echo "  -h, --help                 show this help"
+    echo ""
+    echo "examples:"
+    echo "  milany-vault create secure -s 2G"
+    echo "  milany-vault open sensitive"
+    echo "  milany-vault close sensitive"
+}
+
+init_vault_system() {
+    mkdir -p "$VAULT_DIR"
+    mkdir -p "$CONFIG_DIR"
+    mkdir -p "$MOUNT_BASE"
+}
+
+check_deps() {
+    local missing=()
+    command -v cryptsetup >/dev/null 2>&1 || missing+=("cryptsetup")
+    command -v losetup >/dev/null 2>&1 || missing+=("util-linux")
+
+    if [ ${#missing[@]} -gt 0 ]; then
+        echo -e "${RED}error: missing dependencies: ${missing[*]}${NC}"
+        echo "install with: pacman -S ${missing[*]}"
+        exit 1
+    fi
+}
+
+get_device_path() {
+    local name="$1"
+    echo "/dev/mapper/milany-vault-$name"
+}
+
+get_container_path() {
+    local name="$1"
+    echo "$VAULT_DIR/$name.img"
+}
+
+create_vault() {
+    local name="$1"
+    local size="${2:-1G}"
+    local cipher="${3:-aes-xts-plain64}"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}error: vault name required${NC}"
+        return 1
+    fi
+
+    local container=$(get_container_path "$name")
+    local device=$(get_device_path "$name")
+
+    if [ -f "$container" ]; then
+        echo -e "${RED}error: vault '$name' already exists${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}creating vault: $name${NC}"
+    echo -e "${CYAN}size: $size, cipher: $cipher${NC}"
+
+    truncate -s "$size" "$container"
+
+    echo -e "${YELLOW}enter passphrase for vault:${NC}"
+    echo -e "${YELLOW}(minimum 8 characters)${NC}"
+
+    cryptsetup luksFormat --type luks2 --cipher "$cipher" -S 0 "$container"
+
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}failed to create vault${NC}"
+        rm -f "$container"
+        return 1
+    fi
+
+    echo -e "${YELLOW}opening vault to format...${NC}"
+    echo "enter passphrase:"
+    cryptsetup luksOpen "$container" "milany-vault-$name"
+
+    mkfs.ext4 "$device"
+
+    cryptsetup luksClose "milany-vault-$name"
+
+    cat > "$CONFIG_DIR/$name.conf" << EOF
+NAME=$name
+SIZE=$size
+CIPHER=$cipher
+CONTAINER=$container
+CREATED=$(date +%Y-%m-%d)
+EOF
+
+    echo -e "${GREEN}✓ vault '$name' created successfully${NC}"
+    echo -e "${CYAN}container: $container${NC}"
+}
+
+open_vault() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}error: vault name required${NC}"
+        return 1
+    fi
+
+    local container=$(get_container_path "$name")
+    local device=$(get_device_path "$name")
+    local mount_point="$MOUNT_BASE/$name"
+
+    if [ ! -f "$container" ]; then
+        echo -e "${RED}error: vault '$name' not found${NC}"
+        return 1
+    fi
+
+    if [ -b "$device" ]; then
+        echo -e "${YELLOW}vault already open${NC}"
+        return 0
+    fi
+
+    echo -e "${BLUE}opening vault: $name${NC}"
+    echo "enter passphrase:"
+
+    cryptsetup luksOpen "$container" "milany-vault-$name"
+
+    if [ $? -ne 0 ]; then
+        echo -e "${RED}failed to open vault${NC}"
+        return 1
+    fi
+
+    mkdir -p "$mount_point"
+    mount "$device" "$mount_point"
+
+    echo -e "${GREEN}✓ vault opened${NC}"
+    echo -e "${CYAN}mounted at: $mount_point${NC}"
+    echo -e "${YELLOW}use 'milany-vault close $name' when done${NC}"
+}
+
+close_vault() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}error: vault name required${NC}"
+        return 1
+    fi
+
+    local device=$(get_device_path "$name")
+    local mount_point="$MOUNT_BASE/$name"
+
+    if [ ! -b "$device" ]; then
+        echo -e "${RED}error: vault '$name' is not open${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}closing vault: $name${NC}"
+
+    umount "$mount_point" 2>/dev/null
+    cryptsetup luksClose "milany-vault-$name"
+
+    rmdir "$mount_point" 2>/dev/null
+
+    echo -e "${GREEN}✓ vault closed${NC}"
+}
+
+list_vaults() {
+    echo -e "${CYAN}[ vaults ]${NC}"
+    echo ""
+
+    if [ ! -d "$VAULT_DIR" ]; then
+        echo -e "${YELLOW}no vaults found${NC}"
+        return
+    fi
+
+    for container in "$VAULT_DIR"/*.img; do
+        [ -f "$container" ] || continue
+        local name=$(basename "$container" .img)
+        local size=$(du -h "$container" | cut -f1)
+        local device=$(get_device_path "$name")
+
+        if [ -b "$device" ]; then
+            echo -e "${GREEN}● $name (OPEN)${NC}"
+        else
+            echo -e "${WHITE}○ $name${NC}"
+        fi
+        echo -e "  ${CYAN}size: $size${NC}"
+        echo ""
+    done
+}
+
+show_status() {
+    echo -e "${CYAN}[ open vaults ]${NC}"
+    echo ""
+
+    local open_count=0
+
+    for dev in /dev/mapper/milany-vault-*; do
+        [ -e "$dev" ] || continue
+        local name=$(basename "$dev" | sed 's/milany-vault-//')
+        local mount_point="$MOUNT_BASE/$name"
+
+        open_count=$((open_count + 1))
+        echo -e "${GREEN}● $name${NC}"
+        echo -e "  ${CYAN}device: $dev${NC}"
+        echo -e "  ${CYAN}mount: $mount_point${NC}"
+
+        if mountpoint -q "$mount_point" 2>/dev/null; then
+            local used=$(df -h "$mount_point" | awk 'NR==2 {print $3}')
+            local avail=$(df -h "$mount_point" | awk 'NR==2 {print $4}')
+            echo -e "  ${CYAN}used: $used, available: $avail${NC}"
+        fi
+        echo ""
+    done
+
+    if [ $open_count -eq 0 ]; then
+        echo -e "${YELLOW}no open vaults${NC}"
+    fi
+}
+
+delete_vault() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}error: vault name required${NC}"
+        return 1
+    fi
+
+    local device=$(get_device_path "$name")
+    local container=$(get_container_path "$name")
+
+    if [ -b "$device" ]; then
+        echo -e "${RED}error: vault is open, close it first${NC}"
+        return 1
+    fi
+
+    if [ ! -f "$container" ]; then
+        echo -e "${RED}error: vault '$name' not found${NC}"
+        return 1
+    fi
+
+    echo -n -e "${RED}delete vault '$name'? this cannot be undone [y/N]: ${NC}"
+    read -r confirm
+
+    if [[ ! "$confirm" =~ ^[Yy]$ ]]; then
+        echo -e "${YELLOW}cancelled${NC}"
+        return
+    fi
+
+    milany-shred -u -n 7 "$container"
+    rm -f "$CONFIG_DIR/$name.conf"
+
+    echo -e "${GREEN}✓ vault deleted${NC}"
+}
+
+resize_vault() {
+    local name="$1"
+    local new_size="$2"
+
+    if [ -z "$name" ] || [ -z "$new_size" ]; then
+        echo -e "${RED}error: name and size required${NC}"
+        return 1
+    fi
+
+    local device=$(get_device_path "$name")
+
+    if [ -b "$device" ]; then
+        echo -e "${RED}error: close vault first${NC}"
+        return 1
+    fi
+
+    echo -e "${YELLOW}resizing is complex, recommended to create new vault${NC}"
+    echo -e "${CYAN}current vault preserved, consider creating new one instead${NC}"
+}
+
+add_key() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}error: vault name required${NC}"
+        return 1
+    fi
+
+    local container=$(get_container_path "$name")
+
+    if [ ! -f "$container" ]; then
+        echo -e "${RED}error: vault '$name' not found${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}adding key to vault: $name${NC}"
+    echo "enter existing passphrase:"
+    cryptsetup luksAddKey "$container"
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ key added${NC}"
+    else
+        echo -e "${RED}failed to add key${NC}"
+    fi
+}
+
+remove_key() {
+    local name="$1"
+    local slot="$2"
+
+    if [ -z "$name" ] || [ -z "$slot" ]; then
+        echo -e "${RED}error: name and slot required${NC}"
+        return 1
+    fi
+
+    local container=$(get_container_path "$name")
+
+    echo -e "${YELLOW}removing key slot $slot${NC}"
+    echo "enter passphrase:"
+    cryptsetup luksKillSlot "$container" "$slot"
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ key slot removed${NC}"
+    else
+        echo -e "${RED}failed to remove key slot${NC}"
+    fi
+}
+
+show_info() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}error: vault name required${NC}"
+        return 1
+    fi
+
+    local container=$(get_container_path "$name")
+
+    if [ ! -f "$container" ]; then
+        echo -e "${RED}error: vault '$name' not found${NC}"
+        return 1
+    fi
+
+    echo -e "${MAGENTA}=== vault info: $name ===${NC}"
+    echo ""
+
+    if [ -f "$CONFIG_DIR/$name.conf" ]; then
+        cat "$CONFIG_DIR/$name.conf"
+        echo ""
+    fi
+
+    echo -e "${CYAN}[ container ]${NC}"
+    ls -lh "$container"
+    echo ""
+
+    echo -e "${CYAN}[ luks info ]${NC}"
+    cryptsetup luksDump "$container" 2>/dev/null | head -20
+}
+
+secure_clipboard() {
+    local name="$1"
+
+    if [ -z "$name" ]; then
+        echo -e "${RED}error: vault name required${NC}"
+        return 1
+    fi
+
+    local mount_point="$MOUNT_BASE/$name"
+
+    if ! mountpoint -q "$mount_point" 2>/dev/null; then
+        echo -e "${RED}error: vault not mounted${NC}"
+        return 1
+    fi
+
+    echo -e "${CYAN}secure clipboard - stores to vault${NC}"
+    echo ""
+    echo "1. copy text to clipboard (stored in vault)"
+    echo "2. read from clipboard (from vault)"
+    echo "3. clear clipboard"
+    echo ""
+    echo -n "action: "
+    read -r action
+
+    local clipboard_file="$mount_point/.clipboard"
+
+    case "$action" in
+        1)
+            echo -n "text to store: "
+            read -r text
+            echo "$text" > "$clipboard_file"
+            echo -e "${GREEN}✓ stored to vault${NC}"
+            ;;
+        2)
+            if [ -f "$clipboard_file" ]; then
+                cat "$clipboard_file"
+            else
+                echo -e "${YELLOW}no clipboard data${NC}"
+            fi
+            ;;
+        3)
+            rm -f "$clipboard_file"
+            echo -e "${GREEN}✓ clipboard cleared${NC}"
+            ;;
+    esac
+}
+
+init_vault_system
+check_deps
+
+case "${1:-help}" in
+    create)
+        create_vault "$2" "$3" "$4"
+        ;;
+    open)
+        open_vault "$2"
+        ;;
+    close)
+        close_vault "$2"
+        ;;
+    list)
+        list_vaults
+        ;;
+    status)
+        show_status
+        ;;
+    delete)
+        delete_vault "$2"
+        ;;
+    resize)
+        resize_vault "$2" "$3"
+        ;;
+    addkey)
+        add_key "$2"
+        ;;
+    rmkey)
+        remove_key "$2" "$3"
+        ;;
+    info)
+        show_info "$2"
+        ;;
+    clipboard)
+        secure_clipboard "$2"
+        ;;
+    -h|--help)
+        show_help
+        ;;
+    *)
+        show_help
+        exit 1
+        ;;
+esac

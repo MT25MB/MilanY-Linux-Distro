@@ -1,0 +1,448 @@
+#!/bin/bash
+# milanY steganography toolkit
+# hidden data detection and embedding
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+TEMP_DIR="/tmp/milany-stego"
+LOG_FILE="/var/log/milany-steganography.log"
+
+show_help() {
+    echo -e "${CYAN}milanY steganography toolkit${NC}"
+    echo ""
+    echo "usage: milany-steganography [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  encode <image> <data> <output>   hide data in image (LSB)"
+    echo "  decode <image>                  extract hidden data"
+    echo "  detect <image>                   detect steganography"
+    echo "  analyze <file>                  analyze file for hidden content"
+    echo "  hide-file <image> <file> <out>   embed file in image"
+    echo "  extract-file <image>             extract embedded file"
+    echo "  cover                            generate random cover image"
+    echo ""
+    echo "options:"
+    echo "  -b, --bits <n>      number of LSB bits (1-4, default: 1)"
+    echo "  -e, --encrypt       encrypt data before hiding"
+    echo "  -p, --password      password for encryption"
+    echo "  -v, --verbose       verbose output"
+    echo "  -h, --help         show this help"
+    echo ""
+    echo "examples:"
+    echo "  milany-steganography encode image.png 'secret' output.png"
+    echo "  milany-steganography decode output.png"
+    echo "  milany-steganography detect suspicious.png"
+}
+
+log_message() {
+    echo "$(date '+%Y-%m-%d %H:%M:%S') $1" >> "$LOG_FILE"
+}
+
+init_stego() {
+    mkdir -p "$TEMP_DIR"
+    touch "$LOG_FILE"
+}
+
+check_deps() {
+    if ! command -v python3 >/dev/null 2>&1; then
+        echo -e "${RED}error: python3 required${NC}"
+        exit 1
+    fi
+
+    if ! python3 -c "from PIL import Image" 2>/dev/null; then
+        echo -e "${YELLOW}warning: PIL/Pillow not installed, some features may not work${NC}"
+    fi
+}
+
+encode_lsb() {
+    local input="$1"
+    local data="$2"
+    local output="$3"
+    local bits="${4:-1}"
+
+    if [ ! -f "$input" ]; then
+        echo -e "${RED}error: input image not found${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}encoding data into $input${NC}"
+
+    python3 << EOF
+from PIL import Image
+import sys
+
+try:
+    img = Image.open("$input")
+    if img.mode != 'RGB' and img.mode != 'RGBA':
+        print("Converting to RGB")
+        img = img.convert('RGB')
+    
+    width, height = img.size
+    pixels = img.load()
+    
+    data = "$data" + '\x00'
+    data_bytes = data.encode('utf-8')
+    
+    data_len = len(data_bytes)
+    max_capacity = width * height * 3 * $bits // 8
+    
+    if data_len > max_capacity:
+        print(f"Error: Data too large. Max: {max_capacity} bytes, Data: {data_len}")
+        sys.exit(1)
+    
+    bits_binary = ''.join(format(byte, '08b') for byte in data_bytes)
+    
+    bit_index = 0
+    for y in range(height):
+        for x in range(width):
+            if bit_index >= len(bits_binary):
+                break
+            
+            r, g, b = pixels[x, y]
+            
+            new_r = (r & (0xFF ^ ((1 << $bits) - 1))) | int(bits_binary[bit_index:bit_index+$bits], 2) if bit_index + $bits <= len(bits_binary) else r
+            bit_index += $bits
+            
+            if bit_index >= len(bits_binary):
+                pixels[x, y] = (new_r, g, b)
+                break
+            
+            g_bits = bits_binary[bit_index:bit_index+$bits]
+            new_g = (g & (0xFF ^ ((1 << $bits) - 1))) | int(g_bits, 2)
+            bit_index += $bits
+            
+            if bit_index >= len(bits_binary):
+                pixels[x, y] = (new_r, new_g, b)
+                break
+            
+            b_bits = bits_binary[bit_index:bit_index+$bits]
+            new_b = (b & (0xFF ^ ((1 << $bits) - 1))) | int(b_bits, 2)
+            bit_index += $bits
+            
+            pixels[x, y] = (new_r, new_g, new_b)
+            
+            if bit_index >= len(bits_binary):
+                break
+    
+    img.save("$output")
+    print(f"Success: hidden {data_len} bytes in $output")
+    
+except Exception as e:
+    print(f"Error: {e}")
+    sys.exit(1)
+EOF
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ data encoded successfully${NC}"
+        log_message "INFO" "encoded data into $output"
+    fi
+}
+
+decode_lsb() {
+    local input="$1"
+    local bits="${2:-1}"
+
+    if [ ! -f "$input" ]; then
+        echo -e "${RED}error: image not found${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}decoding hidden data from $input${NC}"
+
+    python3 << EOF
+from PIL import Image
+import sys
+
+try:
+    img = Image.open("$input")
+    if img.mode != 'RGB':
+        img = img.convert('RGB')
+    
+    width, height = img.size
+    pixels = img.load()
+    
+    extracted_bits = ''
+    
+    for y in range(height):
+        for x in range(width):
+            r, g, b = pixels[x, y]
+            
+            extracted_bits += format(r & ((1 << $bits) - 1), '0' + str($bits) + 'b')
+            
+            extracted_bits += format(g & ((1 << $bits) - 1), '0' + str($bits) + 'b')
+            
+            extracted_bits += format(b & ((1 << $bits) - 1), '0' + str($bits) + 'b')
+            
+            if len(extracted_bits) >= 8:
+                byte = extracted_bits[:8]
+                extracted_bits = extracted_bits[8:]
+                
+                if byte == '00000000':
+                    bytes_data = []
+                    while len(extracted_bits) >= 8:
+                        bytes_data.append(int(extracted_bits[:8], 2))
+                        extracted_bits = extracted_bits[8:]
+                    
+                    try:
+                        print("".join(chr(b) for b in bytes_data if b < 128))
+                    except:
+                        pass
+                    break
+    
+except Exception as e:
+    print(f"Error: {e}")
+    sys.exit(1)
+EOF
+}
+
+detect_stego() {
+    local input="$1"
+
+    if [ ! -f "$input" ]; then
+        echo -e "${RED}error: file not found${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}analyzing $input for steganography${NC}"
+    echo ""
+
+    python3 << EOF
+from PIL import Image
+import sys
+
+try:
+    img = Image.open("$input")
+    
+    print(f"Format: {img.format}")
+    print(f"Mode: {img.mode}")
+    print(f"Size: {img.size}")
+    
+    if img.mode == 'RGB' or img.mode == 'RGBA':
+        pixels = list(img.getdata())
+        
+        r_vals = [p[0] for p in pixels[:1000]]
+        g_vals = [p[1] for p in pixels[:1000]]
+        b_vals = [p[2] for p in pixels[:1000]]
+        
+        import statistics
+        
+        r_even = sum(1 for v in r_vals if v % 2 == 0)
+        r_odd = sum(1 for v in r_vals if v % 2 == 1)
+        
+        print(f"\nLSB Distribution:")
+        print(f"Red even/odd: {r_even}/{r_odd}")
+        
+        ratio = r_even / (r_odd + 0.001)
+        
+        if 0.48 < ratio < 0.52:
+            print("\nStatus: No obvious LSB patterns")
+        elif ratio > 0.55:
+            print("\nStatus: LSB manipulation detected")
+            print("Note: May contain hidden data")
+        else:
+            print("\nStatus: Unusual distribution")
+    
+    print("\n[ Additional Checks ]")
+    
+    import os
+    file_size = os.path.getsize("$input")
+    img_size = img.size[0] * img.size[1]
+    if img.mode == 'RGB':
+        expected_size = img_size * 3
+    else:
+        expected_size = img_size * 4
+    
+    print(f"File size: {file_size} bytes")
+    print(f"Expected image data: ~{expected_size} bytes")
+    
+    if file_size > expected_size + 1000:
+        print(f"Extra: {file_size - expected_size} bytes - possible appended data")
+    
+except Exception as e:
+    print(f"Error: {e}")
+    sys.exit(1)
+EOF
+}
+
+analyze_file() {
+    local input="$1"
+
+    if [ ! -f "$input" ]; then
+        echo -e "${RED}error: file not found${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}analyzing: $input${NC}"
+    echo ""
+
+    echo -e "${CYAN}[ file properties ]${NC}"
+    file "$input"
+    ls -la "$input"
+    echo ""
+
+    echo -e "${CYAN}[ strings analysis ]${NC}"
+    strings "$input" | tail -20
+    echo ""
+
+    echo -e "${CYAN}[ hex dump ]${NC}"
+    xxd "$input" | tail -20
+    echo ""
+
+    local ext="${input##*.}"
+    if [ "$ext" = "png" ] || [ "$ext" = "jpg" ] || [ "$ext" = "jpeg" ]; then
+        detect_stego "$input"
+    fi
+}
+
+hide_file_in_image() {
+    local image="$1"
+    local file="$2"
+    local output="$3"
+
+    if [ ! -f "$image" ]; then
+        echo -e "${RED}error: image not found${NC}"
+        return 1
+    fi
+
+    if [ ! -f "$file" ]; then
+        echo -e "${RED}error: file not found${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}hiding $file in $image${NC}"
+
+    local base64_data=$(base64 -w 0 "$file")
+    local file_size=$(wc -c < "$file")
+    local file_name=$(basename "$file")
+
+    local header="MILANY_FILE_START|$file_name|$file_size|"
+    local footer="|MILANY_FILE_END"
+
+    encode_lsb "$image" "$header$base64_data$footer" "$output"
+}
+
+extract_file_from_image() {
+    local input="$1"
+
+    if [ ! -f "$input" ]; then
+        echo -e "${RED}error: image not found${NC}"
+        return 1
+    fi
+
+    echo -e "${BLUE}extracting embedded file from $input${NC}"
+
+    python3 << 'EOF'
+from PIL import Image
+
+img = Image.open("$input")
+if img.mode != 'RGB':
+    img = img.convert('RGB')
+
+width, height = img.size
+pixels = img.load()
+
+extracted_bits = ''
+
+for y in range(height):
+    for x in range(width):
+        r, g, b = pixels[x, y]
+        extracted_bits += format(r & 1, '01b')
+        extracted_bits += format(g & 1, '01b')
+        extracted_bits += format(b & 1, '01b')
+
+data = ''
+for i in range(0, len(extracted_bits), 8):
+    byte = extracted_bits[i:i+8]
+    if len(byte) == 8:
+        data += chr(int(byte, 2))
+
+if 'MILANY_FILE_START' in data:
+    start_idx = data.index('MILANY_FILE_START') + len('MILANY_FILE_START')
+    end_idx = data.index('MILANY_FILE_END')
+    
+    content = data[start_idx:end_idx]
+    parts = content.split('|', 2)
+    
+    if len(parts) >= 3:
+        filename = parts[0]
+        filesize = int(parts[1])
+        filedata = parts[2]
+        
+        output_data = bytes.fromhex(filedata) if len(filedata) % 2 == 0 else filedata.encode()
+        
+        with open(f"/tmp/extracted_{filename}", 'w') as f:
+            import base64
+            f.write(base64.b64decode(filedata))
+        
+        print(f"Extracted: {filename} ({filesize} bytes)")
+        print(f"Saved to: /tmp/extracted_{filename}")
+else:
+    print("No embedded file found")
+EOF
+}
+
+generate_cover() {
+    local width="${1:-800}"
+    local height="${2:-600}"
+    local output="${3:-/tmp/cover.png}"
+
+    echo -e "${BLUE}generating random cover image${NC}"
+
+    python3 << EOF
+from PIL import Image
+import random
+
+img = Image.new('RGB', ($width, $height))
+pixels = img.load()
+
+for y in range($height):
+    for x in range($width):
+        pixels[x, y] = (
+            random.randint(0, 255),
+            random.randint(0, 255),
+            random.randint(0, 255)
+        )
+
+img.save("$output")
+print(f"Cover image saved: $output")
+EOF
+}
+
+init_stego
+
+case "${1:-help}" in
+    encode)
+        encode_lsb "$2" "$3" "$4" "${5:-1}"
+        ;;
+    decode)
+        decode_lsb "$2" "${3:-1}"
+        ;;
+    detect)
+        detect_stego "$2"
+        ;;
+    analyze)
+        analyze_file "$2"
+        ;;
+    hide-file)
+        hide_file_in_image "$2" "$3" "$4"
+        ;;
+    extract-file)
+        extract_file_from_image "$2"
+        ;;
+    cover)
+        generate_cover "$2" "$3" "$4"
+        ;;
+    -h|--help)
+        show_help
+        ;;
+    *)
+        show_help
+        exit 1
+        ;;
+esac

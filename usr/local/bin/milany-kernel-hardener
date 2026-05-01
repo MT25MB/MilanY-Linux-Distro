@@ -1,0 +1,461 @@
+#!/bin/bash
+# milanY kernel security hardener
+# interactive kernel parameter tuning and security optimization
+
+RED='\033[0;31m'
+GREEN='\033[0;32m'
+BLUE='\033[0;34m'
+CYAN='\033[0;36m'
+YELLOW='\033[1;33m'
+MAGENTA='\033[0;35m'
+WHITE='\033[1;37m'
+NC='\033[0m'
+
+SYSCTL_CONF="/etc/sysctl.d/99-milany-security.conf"
+MODPROBE_CONF="/etc/modprobe.d/milany-hardening.conf"
+
+show_help() {
+    echo -e "${CYAN}milanY kernel security hardener${NC}"
+    echo ""
+    echo "usage: milany-kernel-hardener [command] [options]"
+    echo ""
+    echo "commands:"
+    echo "  status                    show current kernel security status"
+    echo "  apply                     apply milanY recommended hardening"
+    echo "  apply-full                apply maximum security settings"
+    echo "  apply-network             network hardening only"
+    echo "  apply-memory              memory protection only"
+    echo "  apply-filesystem          filesystem hardening only"
+    echo "  check <parameter>          check specific sysctl parameter"
+    echo "  set <param> <value>       set sysctl parameter"
+    echo "  revert                    revert to defaults"
+    echo "  modules                   show loaded security modules"
+    echo "  apparmor                  manage AppArmor profiles"
+    echo "  selinux                   manage SELinux (if available)"
+    echo ""
+    echo "options:"
+    echo "  -v, --verbose            show detailed output"
+    echo "  -h, --help               show this help"
+    echo ""
+    echo "examples:"
+    echo "  milany-kernel-hardener status"
+    echo "  milany-kernel-hardener apply"
+    echo "  milany-kernel-hardener set net.ipv4.icmp_echo_ignore_broadcasts 1"
+}
+
+apply_network_hardening() {
+    cat > "$SYSCTL_CONF" << 'EOF'
+# milanY Network Security Hardening
+
+# IP forwarding - disable if not needed
+net.ipv4.ip_forward = 0
+net.ipv6.conf.all.forwarding = 0
+
+# ICMP redirect acceptance - disable
+net.ipv4.conf.all.accept_redirects = 0
+net.ipv6.conf.all.accept_redirects = 0
+net.ipv4.conf.default.accept_redirects = 0
+net.ipv6.conf.default.accept_redirects = 0
+
+# Send ICMP redirects - disable
+net.ipv4.conf.all.send_redirects = 0
+net.ipv4.conf.default.send_redirects = 0
+
+# IP source routing - disable
+net.ipv4.conf.all.accept_source_route = 0
+net.ipv6.conf.all.accept_source_route = 0
+net.ipv4.conf.default.accept_source_route = 0
+net.ipv6.conf.default.accept_source_route = 0
+
+# ICMP echo ignore broadcasts
+net.ipv4.icmp_echo_ignore_broadcasts = 1
+
+# ICMP ignore bogus error responses
+net.ipv4.icmp_ignore_bogus_error_responses = 1
+
+# Reverse path filtering
+net.ipv4.conf.all.rp_filter = 1
+net.ipv4.conf.default.rp_filter = 1
+
+# TCP SYN cookies - enable
+net.ipv4.tcp_syncookies = 1
+net.ipv4.tcp_max_syn_backlog = 2048
+net.ipv4.tcp_synack_retries = 2
+net.ipv4.tcp_syn_retries = 5
+
+# Disable IP packet reassembly
+net.ipv4.conf.all.accept_source_route = 0
+
+# Protect against IP spoofing
+net.ipv4.conf.all.log_martians = 1
+net.ipv4.conf.default.log_martians = 1
+
+# Disable IPv6 if not needed
+net.ipv6.conf.all.disable_ipv6 = 0
+net.ipv6.conf.default.disable_ipv6 = 0
+
+# Neighbor table tuning
+net.ipv4.neigh.default.gc_thresh1 = 4096
+net.ipv4.neigh.default.gc_thresh2 = 6144
+net.ipv4.neigh.default.gc_thresh3 = 8192
+
+# Kernel hardening
+kernel.dmesg_restrict = 1
+kernel.kptr_restrict = 2
+kernel.yama.ptrace_scope = 2
+EOF
+
+    sysctl -p "$SYSCTL_CONF" 2>/dev/null
+}
+
+apply_memory_hardening() {
+    cat >> "$SYSCTL_CONF" << 'EOF'
+
+# milanY Memory Protection Hardening
+
+# Disable core dumps
+kernel.core_uses_pid = 0
+kernel.core_pattern = /dev/null
+fs.suid_dumpable = 0
+
+# Kernel samepage merging
+kernel.kasan.enabled = 1
+
+# Memory protection
+vm.mmap_min_addr = 65536
+vm.swappiness = 10
+
+# Hide kernel pointers
+kernel.dmesg_restrict = 1
+kernel.kptr_restrict = 2
+
+# Ptrace restriction
+kernel.yama.ptrace_scope = 2
+
+# Control group enforcement
+kernel.cgroup_disable = memory
+
+# Disable unused file systems
+fs.devtfs = 0
+EOF
+
+    cat > "$MODPROBE_CONF" << 'EOF'
+# milanY memory protection module settings
+
+# Disable unused filesystems
+install cramfs /bin/true
+install freevxfs /bin/true
+install jffs2 /bin/true
+install hfs /bin/true
+install hfsplus /bin/true
+install squashfs /bin/true
+install udf /bin/true
+
+# Disable unused protocols
+install dccp /bin/true
+install sctp /bin/true
+install rds /bin/true
+install tipc /bin/true
+install n-hdlc /bin/true
+install ax25 /bin/true
+install netrom /bin/true
+install rose /bin/true
+install decnet /bin/true
+install econet /bin/true
+install af_802154 /bin/true
+install x25 /bin/true
+install lay5 /bin/true
+
+# Disable wireless
+install wimax /bin/true
+install bluetooth /bin/true
+install usb-storage /bin/true
+EOF
+
+    sysctl -p "$SYSCTL_CONF" 2>/dev/null
+}
+
+apply_filesystem_hardening() {
+    cat >> "$SYSCTL_CONF" << 'EOF'
+
+# milanY Filesystem Hardening
+
+# Read-only mounts
+kernel mounts read-only = 1
+
+# Restrict TTY access
+kernel.sysrq = 0
+
+# Disable core dumps in systemd
+LimitCORE=0
+
+# User namespace restrictions
+user.max_user_namespaces = 0
+EOF
+
+    sysctl -p "$SYSCTL_CONF" 2>/dev/null
+}
+
+show_status() {
+    echo -e "${MAGENTA}=== Kernel Security Status ===${NC}"
+    echo ""
+
+    echo -e "${CYAN}[ Network Security ]${NC}"
+    echo "IP Forwarding: $(sysctl -n net.ipv4.ip_forward 2>/dev/null || echo 'N/A')"
+    echo "ICMP Redirects: $(sysctl -n net.ipv4.conf.all.accept_redirects 2>/dev/null || echo 'N/A')"
+    echo "Source Routing: $(sysctl -n net.ipv4.conf.all.accept_source_route 2>/dev/null || echo 'N/A')"
+    echo "SYN Cookies: $(sysctl -n net.ipv4.tcp_syncookies 2>/dev/null || echo 'N/A')"
+    echo "RP Filter: $(sysctl -n net.ipv4.conf.all.rp_filter 2>/dev/null || echo 'N/A')"
+    echo "Log Martians: $(sysctl -n net.ipv4.conf.all.log_martians 2>/dev/null || echo 'N/A')"
+    echo ""
+
+    echo -e "${CYAN}[ Memory Protection ]${NC}"
+    echo "Core Dumps: $(sysctl -n fs.suid_dumpable 2>/dev/null || echo 'N/A')"
+    echo "Ptrace Scope: $(sysctl -n kernel.yama.ptrace_scope 2>/dev/null || echo 'N/A')"
+    echo "Kptr Restrict: $(sysctl -n kernel.kptr_restrict 2>/dev/null || echo 'N/A')"
+    echo "Dmesg Restrict: $(sysctl -n kernel.dmesg_restrict 2>/dev/null || echo 'N/A')"
+    echo "mmap_min_addr: $(sysctl -n vm.mmap_min_addr 2>/dev/null || echo 'N/A')"
+    echo ""
+
+    echo -e "${CYAN}[ Filesystem ]${NC}"
+    echo "Sysrq: $(sysctl -n kernel.sysrq 2>/dev/null || echo 'N/A')"
+    echo "Randomize slab: $(sysctl -n kernel.randomize_va_space 2>/dev/null || echo 'N/A')"
+    echo ""
+
+    echo -e "${CYAN}[ Config File ]${NC}"
+    if [ -f "$SYSCTL_CONF" ]; then
+        echo -e "${GREEN}✓ milanY hardening config exists${NC}"
+        echo "  path: $SYSCTL_CONF"
+        echo "  size: $(wc -l < "$SYSCTL_CONF") lines"
+    else
+        echo -e "${YELLOW}○ no hardening config applied${NC}"
+    fi
+    echo ""
+
+    echo -e "${CYAN}[ Module Config ]${NC}"
+    if [ -f "$MODPROBE_CONF" ]; then
+        echo -e "${GREEN}✓ module restrictions configured${NC}"
+    else
+        echo -e "${YELLOW}○ no module restrictions${NC}"
+    fi
+}
+
+show_modules() {
+    echo -e "${CYAN}[ Loaded Security Modules ]${NC}"
+    echo ""
+
+    echo -e "${WHITE}Linux Security Modules:${NC}"
+    ls -la /sys/kernel/security/ 2>/dev/null | grep -v total || echo "  (none visible)"
+
+    echo ""
+
+    if command -v apparmor_status >/dev/null 2>&1; then
+        echo -e "${WHITE}AppArmor:${NC}"
+        apparmor_status 2>/dev/null | head -20
+    fi
+
+    if command -v getenforce >/dev/null 2>&1; then
+        echo -e "${WHITE}SElinux:${NC}"
+        getenforce 2>/dev/null
+    fi
+
+    echo ""
+
+    echo -e "${WHITE}Loaded kernel modules (security-related):${NC}"
+    lsmod | grep -E "selinux|apparmor|smack|tomoyo|yama|lsm" 2>/dev/null || echo "  (none found)"
+}
+
+check_param() {
+    local param="$1"
+
+    if [ -z "$param" ]; then
+        echo -e "${RED}error: parameter name required${NC}"
+        return 1
+    fi
+
+    local value=$(sysctl -n "$param" 2>/dev/null)
+
+    if [ -n "$value" ]; then
+        echo -e "${CYAN}$param = $value${NC}"
+    else
+        echo -e "${RED}parameter not found${NC}"
+    fi
+}
+
+set_param() {
+    local param="$1"
+    local value="$2"
+
+    if [ -z "$param" ] || [ -z "$value" ]; then
+        echo -e "${RED}error: parameter and value required${NC}"
+        return 1
+    fi
+
+    sysctl -w "$param=$value" 2>/dev/null
+
+    if [ $? -eq 0 ]; then
+        echo -e "${GREEN}✓ set $param = $value${NC}"
+
+        if ! grep -q "^$param" "$SYSCTL_CONF" 2>/dev/null; then
+            echo "$param = $value" >> "$SYSCTL_CONF"
+            echo -e "${CYAN}added to $SYSCTL_CONF${NC}"
+        fi
+    else
+        echo -e "${RED}failed to set parameter (may require root)${NC}"
+    fi
+}
+
+revert_hardening() {
+    echo -e "${YELLOW}reverting to default kernel settings...${NC}"
+
+    if [ -f "$SYSCTL_CONF" ]; then
+        rm "$SYSCTL_CONF"
+        echo -e "${GREEN}removed $SYSCTL_CONF${NC}"
+    fi
+
+    if [ -f "$MODPROBE_CONF" ]; then
+        rm "$MODPROBE_CONF"
+        echo -e "${GREEN}removed $MODPROBE_CONF${NC}"
+    fi
+
+    sysctl -e --system 2>/dev/null
+
+    echo -e "${GREEN}✓ reverted to defaults${NC}"
+}
+
+manage_apparmor() {
+    local action="$1"
+
+    if ! command -v apparmor_status >/dev/null 2>&1; then
+        echo -e "${RED}AppArmor not installed${NC}"
+        return 1
+    fi
+
+    case "$action" in
+        status)
+            apparmor_status
+            ;;
+        enable)
+            if [ -f /etc/apparmor.d/disable ]; then
+                rm -f /etc/apparmor.d/disable/*
+            fi
+            systemctl enable apparmor 2>/dev/null
+            echo -e "${GREEN}✓ AppArmor enabled${NC}"
+            ;;
+        disable)
+            systemctl disable apparmor 2>/dev/null
+            echo -e "${GREEN}✓ AppArmor disabled${NC}"
+            ;;
+        reload)
+            apparmor_parser -r /etc/apparmor.d/* 2>/dev/null
+            echo -e "${GREEN}✓ profiles reloaded${NC}"
+            ;;
+        *)
+            echo -e "${CYAN}AppArmor management:${NC}"
+            echo "  status - show AppArmor status"
+            echo "  enable - enable AppArmor"
+            echo "  disable - disable AppArmor"
+            echo "  reload - reload profiles"
+            ;;
+    esac
+}
+
+manage_selinux() {
+    local action="$1"
+
+    if ! command -v getenforce >/dev/null 2>&1; then
+        echo -e "${RED}SELinux not available${NC}"
+        return 1
+    fi
+
+    case "$action" in
+        status)
+            getenforce
+            ;;
+        enforce)
+            setenforce 1 2>/dev/null
+            echo -e "${GREEN}✓ set to Enforcing${NC}"
+            ;;
+        permissive)
+            setenforce 0 2>/dev/null
+            echo -e "${YELLOW}set to Permissive${NC}"
+            ;;
+        *)
+            echo -e "${CYAN}Current: $(getenforce)${NC}"
+            echo "  enforce - set Enforcing"
+            echo "  permissive - set Permissive"
+            ;;
+    esac
+}
+
+VERBOSE=false
+if [[ "$1" == "-v" ]] || [[ "$1" == "--verbose" ]]; then
+    VERBOSE=true
+    shift
+fi
+
+case "${1:-help}" in
+    status)
+        show_status
+        ;;
+    apply)
+        echo -e "${BLUE}applying milanY recommended hardening...${NC}"
+        apply_network_hardening
+        apply_memory_hardening
+        apply_filesystem_hardening
+        echo -e "${GREEN}✓ hardening applied${NC}"
+        echo -e "${CYAN}run 'milany-kernel-hardener status' to verify${NC}"
+        ;;
+    apply-network)
+        echo -e "${BLUE}applying network hardening...${NC}"
+        apply_network_hardening
+        echo -e "${GREEN}✓ network hardening applied${NC}"
+        ;;
+    apply-memory)
+        echo -e "${BLUE}applying memory hardening...${NC}"
+        apply_memory_hardening
+        echo -e "${GREEN}✓ memory hardening applied${NC}"
+        ;;
+    apply-filesystem)
+        echo -e "${BLUE}applying filesystem hardening...${NC}"
+        apply_filesystem_hardening
+        echo -e "${GREEN}✓ filesystem hardening applied${NC}"
+        ;;
+    apply-full)
+        echo -e "${BLUE}applying maximum security hardening...${NC}"
+        apply_network_hardening
+        apply_memory_hardening
+        apply_filesystem_hardening
+
+        echo "kernel.randomize_va_space = 2" >> "$SYSCTL_CONF"
+        echo "kernel.exec-shield = 1" >> "$SYSCTL_CONF"
+        sysctl -p "$SYSCTL_CONF" 2>/dev/null
+
+        echo -e "${GREEN}✓ maximum hardening applied${NC}"
+        ;;
+    check)
+        check_param "$2"
+        ;;
+    set)
+        set_param "$2" "$3"
+        ;;
+    revert)
+        revert_hardening
+        ;;
+    modules)
+        show_modules
+        ;;
+    apparmor)
+        manage_apparmor "$2"
+        ;;
+    selinux)
+        manage_selinux "$2"
+        ;;
+    -h|--help)
+        show_help
+        ;;
+    *)
+        show_help
+        exit 1
+        ;;
+esac
